@@ -8,7 +8,7 @@ Document Intelligence service with the built-in Layout model.
 import logging
 from typing import Dict, Any
 from pathlib import Path
-from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.formrecognizer import DocumentAnalysisClient
 from azure.core.credentials import AzureKeyCredential
 
 from config import get_config
@@ -36,10 +36,9 @@ class DocumentExtractor:
         config = get_config()
 
         try:
-            # Remove trailing slash from endpoint if present to avoid double slash in URL
             endpoint = config.doc_intelligence_endpoint.rstrip('/')
 
-            self.client = DocumentIntelligenceClient(
+            self.client = DocumentAnalysisClient(
                 endpoint=endpoint,
                 credential=AzureKeyCredential(config.doc_intelligence_key)
             )
@@ -76,36 +75,33 @@ class DocumentExtractor:
         logger.info(f"Starting text extraction from: {pdf_path}")
 
         try:
-            # Read PDF file
+            # Read and analyze PDF file
             with open(pdf_file, "rb") as f:
-                pdf_bytes = f.read()
+                logger.info(f"Analyzing document...")
+                poller = self.client.begin_analyze_document(
+                    "prebuilt-layout",
+                    document=f
+                )
 
-            logger.info(f"PDF file size: {len(pdf_bytes)} bytes")
-
-            # Analyze document using Layout model
-            # Note: Using analyze_request parameter for the beta SDK version
-            poller = self.client.begin_analyze_document(
-                model_id="prebuilt-layout",
-                analyze_request=pdf_bytes,
-                content_type="application/pdf"
-            )
-
-            logger.info("Document analysis started, waiting for completion...")
-            result = poller.result()
-            logger.info("Document analysis completed")
+                logger.info("Waiting for analysis to complete...")
+                result = poller.result()
+                logger.info("Document analysis completed")
 
             # Extract text content
-            extracted_text = self._extract_text_from_result(result)
+            extracted_text = result.content if result.content else ""
 
             # Get metadata
             metadata = {
                 "source_file": pdf_file.name,
                 "file_path": str(pdf_file.absolute()),
                 "page_count": len(result.pages) if result.pages else 0,
-                "file_size_bytes": len(pdf_bytes)
+                "file_size_bytes": pdf_file.stat().st_size
             }
 
-            logger.info(f"Successfully extracted {len(extracted_text)} characters from {metadata['page_count']} pages")
+            logger.info(
+                f"Successfully extracted {len(extracted_text)} characters "
+                f"from {metadata['page_count']} pages"
+            )
 
             return {
                 "text": extracted_text,
@@ -116,39 +112,6 @@ class DocumentExtractor:
         except Exception as e:
             logger.error(f"Error extracting text from PDF: {e}")
             raise DocumentExtractionError(f"Extraction failed: {e}")
-
-    def _extract_text_from_result(self, result) -> str:
-        """
-        Extract plain text from Document Intelligence result.
-
-        Args:
-            result: Document Intelligence analysis result
-
-        Returns:
-            Extracted text as a single string
-        """
-        extracted_text_parts = []
-
-        # Extract text from paragraphs (preserves document structure better)
-        if hasattr(result, 'paragraphs') and result.paragraphs:
-            logger.info(f"Extracting text from {len(result.paragraphs)} paragraphs")
-            for paragraph in result.paragraphs:
-                if paragraph.content:
-                    extracted_text_parts.append(paragraph.content)
-
-        # Fallback: Extract from pages if no paragraphs
-        elif hasattr(result, 'pages') and result.pages:
-            logger.info(f"Extracting text from {len(result.pages)} pages (fallback method)")
-            for page in result.pages:
-                if hasattr(page, 'lines') and page.lines:
-                    for line in page.lines:
-                        if line.content:
-                            extracted_text_parts.append(line.content)
-
-        # Join all parts with newlines
-        full_text = "\n".join(extracted_text_parts)
-
-        return full_text
 
     def extract_text_from_url(self, document_url: str) -> Dict[str, Any]:
         """
@@ -168,18 +131,17 @@ class DocumentExtractor:
         logger.info(f"Starting text extraction from URL: {document_url}")
 
         try:
-            # Analyze document from URL
-            poller = self.client.begin_analyze_document(
-                model_id="prebuilt-layout",
-                analyze_request={"urlSource": document_url}
+            poller = self.client.begin_analyze_document_from_url(
+                "prebuilt-layout",
+                document_url=document_url
             )
 
-            logger.info("Document analysis started, waiting for completion...")
+            logger.info("Waiting for analysis to complete...")
             result = poller.result()
             logger.info("Document analysis completed")
 
             # Extract text content
-            extracted_text = self._extract_text_from_result(result)
+            extracted_text = result.content if result.content else ""
 
             # Get metadata
             metadata = {
@@ -187,7 +149,10 @@ class DocumentExtractor:
                 "page_count": len(result.pages) if result.pages else 0
             }
 
-            logger.info(f"Successfully extracted {len(extracted_text)} characters from {metadata['page_count']} pages")
+            logger.info(
+                f"Successfully extracted {len(extracted_text)} characters "
+                f"from {metadata['page_count']} pages"
+            )
 
             return {
                 "text": extracted_text,
