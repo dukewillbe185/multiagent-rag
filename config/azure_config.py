@@ -95,12 +95,13 @@ class AzureConfig:
         """Initialize and validate Azure configuration."""
         try:
             # Document Intelligence
-            self.doc_intelligence_endpoint = _get_required_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+            # Strip trailing slashes to prevent double-slash in API URLs
+            self.doc_intelligence_endpoint = _get_required_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT").rstrip('/')
             self.doc_intelligence_key = _get_required_env("AZURE_DOCUMENT_INTELLIGENCE_KEY")
 
             # Azure AI Foundry - Embedding Model
             # CRITICAL: These are separate from Azure OpenAI Service
-            self.ai_foundry_embedding_endpoint = _get_required_env("AZURE_AI_FOUNDRY_EMBEDDING_ENDPOINT")
+            self.ai_foundry_embedding_endpoint = _get_required_env("AZURE_AI_FOUNDRY_EMBEDDING_ENDPOINT").rstrip('/')
             self.ai_foundry_embedding_deployment = _get_required_env("AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME")
             self.ai_foundry_embedding_key = _get_required_env("AZURE_AI_FOUNDRY_EMBEDDING_API_KEY")
             self.ai_foundry_embedding_api_version = _get_optional_env(
@@ -110,7 +111,7 @@ class AzureConfig:
 
             # Azure AI Foundry - GPT-4 Model
             # CRITICAL: These are separate from Azure OpenAI Service
-            self.ai_foundry_gpt4_endpoint = _get_required_env("AZURE_AI_FOUNDRY_GPT4_ENDPOINT")
+            self.ai_foundry_gpt4_endpoint = _get_required_env("AZURE_AI_FOUNDRY_GPT4_ENDPOINT").rstrip('/')
             self.ai_foundry_gpt4_deployment = _get_required_env("AZURE_AI_FOUNDRY_GPT4_DEPLOYMENT_NAME")
             self.ai_foundry_gpt4_key = _get_required_env("AZURE_AI_FOUNDRY_GPT4_API_KEY")
             self.ai_foundry_gpt4_api_version = _get_optional_env(
@@ -119,7 +120,7 @@ class AzureConfig:
             )
 
             # Azure AI Search
-            self.search_endpoint = _get_required_env("AZURE_SEARCH_ENDPOINT")
+            self.search_endpoint = _get_required_env("AZURE_SEARCH_ENDPOINT").rstrip('/')
             self.search_admin_key = _get_required_env("AZURE_SEARCH_ADMIN_KEY")
             self.search_index_name = _get_optional_env("AZURE_SEARCH_INDEX_NAME", "rag-documents-index")
 
