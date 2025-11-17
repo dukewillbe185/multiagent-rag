@@ -36,8 +36,11 @@ class DocumentExtractor:
         config = get_config()
 
         try:
+            # Remove trailing slash from endpoint if present to avoid double slash in URL
+            endpoint = config.doc_intelligence_endpoint.rstrip('/')
+
             self.client = DocumentIntelligenceClient(
-                endpoint=config.doc_intelligence_endpoint,
+                endpoint=endpoint,
                 credential=AzureKeyCredential(config.doc_intelligence_key)
             )
             logger.info("DocumentExtractor initialized successfully")
