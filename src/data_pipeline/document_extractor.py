@@ -80,9 +80,10 @@ class DocumentExtractor:
             logger.info(f"PDF file size: {len(pdf_bytes)} bytes")
 
             # Analyze document using Layout model
+            # Note: Using analyze_request parameter for the beta SDK version
             poller = self.client.begin_analyze_document(
                 model_id="prebuilt-layout",
-                body=pdf_bytes,
+                analyze_request=pdf_bytes,
                 content_type="application/pdf"
             )
 
