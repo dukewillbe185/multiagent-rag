@@ -5,28 +5,28 @@ azure-identity==1.15.0
 applicationinsights==0.11.10
 opencensus-ext-azure==1.1.13
 
-# LangChain and AI
-langchain==0.1.0
-langchain-openai==0.0.2
-langchain-core==0.1.7
-langgraph==0.0.20
-openai==1.6.1
+# LangChain and AI - using compatible versions
+langchain>=0.1.0,<0.2.0
+langchain-openai>=0.0.2,<0.1.0
+langchain-core>=0.1.10,<0.2.0
+langgraph>=0.0.20,<0.1.0
+openai>=1.6.1,<2.0.0
 
 # FastAPI and Web
-fastapi==0.108.0
-uvicorn[standard]==0.25.0
-python-multipart==0.0.6
-pydantic==2.5.3
-pydantic-settings==2.1.0
+fastapi>=0.108.0,<0.110.0
+uvicorn[standard]>=0.25.0,<0.30.0
+python-multipart>=0.0.6,<0.1.0
+pydantic>=2.5.3,<3.0.0
+pydantic-settings>=2.1.0,<3.0.0
 
 # Utilities
-python-dotenv==1.0.0
-aiohttp==3.9.1
-requests==2.31.0
-typing-extensions==4.9.0
+python-dotenv>=1.0.0
+aiohttp>=3.9.1,<4.0.0
+requests>=2.31.0,<3.0.0
+typing-extensions>=4.9.0
 
 # Development and Testing (optional)
-pytest==7.4.3
-pytest-asyncio==0.21.1
-black==23.12.1
-flake8==7.0.0
+pytest>=7.4.3,<8.0.0
+pytest-asyncio>=0.21.1,<0.22.0
+black>=23.12.1,<24.0.0
+flake8>=7.0.0,<8.0.0
