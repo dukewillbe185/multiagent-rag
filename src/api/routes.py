@@ -6,6 +6,7 @@ import logging
 import time
 import tempfile
 import os
+import uuid
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
@@ -26,6 +27,7 @@ from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
 from src.agents.rag_agent import MultiAgentRAG, RagState
 from src.monitoring.logger import track_performance, track_event, track_metric
+from src.monitoring.agent_logger import log_request_start, log_request_complete
 from src.utils.session_memory import get_session_manager
 from config import get_config
 
@@ -255,10 +257,11 @@ async def query_documents(request: QueryRequest):
     start_time = time.time()
     session_id = request.session_id
     question = request.question
+    request_id = str(uuid.uuid4())
 
     logger.info(
         f"[{session_id}] Query received: {question[:100]}...",
-        extra={"session_id": session_id, "question": question}
+        extra={"session_id": session_id, "question": question, "request_id": request_id}
     )
 
     # Track event with session_id
@@ -299,6 +302,9 @@ async def query_documents(request: QueryRequest):
                 f"[{session_id}] New session started",
                 extra={"session_id": session_id}
             )
+
+        # Log request start with structured logging for Application Insights
+        log_request_start(session_id, conversation_turn, question, request_id)
 
         # Get guardrail settings from config
         guardrail_enabled = config.get_optional_env("GUARDRAIL_ENABLED", "true").lower() == "true"
@@ -367,6 +373,18 @@ async def query_documents(request: QueryRequest):
                 "reason": guardrail_reason,
                 "rejection_type": rejection_type
             })
+
+            # Log request complete for guardrail rejection
+            log_request_complete(
+                request_id=request_id,
+                session_id=session_id,
+                duration=processing_time,
+                guardrail_passed=False,
+                agents_executed=["GuardrailAgent"],
+                chunks_retrieved=0,
+                success=True,  # Request succeeded, just rejected by guardrail
+                error=None
+            )
 
             return QueryResponse(
                 success=False,
@@ -464,6 +482,19 @@ async def query_documents(request: QueryRequest):
             }
         )
 
+        # Log request complete for successful processing
+        log_request_complete(
+            request_id=request_id,
+            session_id=session_id,
+            duration=processing_time,
+            guardrail_passed=True,
+            agents_executed=["GuardrailAgent", "SupervisorRetrievalAgent",
+                           "IntentIdentifierAgent", "AnswerGeneratorAgent"],
+            chunks_retrieved=len(retrieved_chunks_info),
+            success=True,
+            error=None
+        )
+
         return QueryResponse(
             success=True,
             question=question,
@@ -479,6 +510,8 @@ async def query_documents(request: QueryRequest):
         )
 
     except Exception as e:
+        processing_time = time.time() - start_time
+
         logger.error(
             f"[{session_id}] Error processing query: {e}",
             extra={"session_id": session_id, "error": str(e)}
@@ -488,6 +521,18 @@ async def query_documents(request: QueryRequest):
             "question": question[:100],
             "error": str(e)
         })
+
+        # Log request complete for error case
+        log_request_complete(
+            request_id=request_id,
+            session_id=session_id,
+            duration=processing_time,
+            guardrail_passed=False,
+            agents_executed=[],  # Unknown which agents ran before error
+            chunks_retrieved=0,
+            success=False,
+            error=str(e)
+        )
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
