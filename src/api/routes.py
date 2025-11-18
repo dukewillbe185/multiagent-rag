@@ -330,17 +330,3 @@ async def create_index(recreate: bool = False):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create index: {str(e)}"
         )
-
-
-# Error handler for HTTPException
-@router.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """Handle HTTP exceptions with consistent error format."""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=ErrorResponse(
-            error=exc.__class__.__name__,
-            message=exc.detail,
-            detail=str(exc)
-        ).dict()
-    )

@@ -90,78 +90,151 @@ def track_performance(operation_name: str = None):
     Decorator to track function performance.
 
     Logs execution time and sends metrics to Application Insights.
+    Supports both sync and async functions.
 
     Args:
         operation_name: Name of the operation (defaults to function name)
 
     Example:
         @track_performance("document_extraction")
-        def extract_document(pdf_path):
+        async def extract_document(pdf_path):
             # ... extraction logic ...
             pass
     """
     def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
-            func_name = operation_name or func.__name__
-            logger = logging.getLogger(func.__module__)
+        import asyncio
+        import inspect
+        
+        # Check if function is async
+        is_async = asyncio.iscoroutinefunction(func)
+        
+        if is_async:
+            # Async wrapper
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs) -> Any:
+                func_name = operation_name or func.__name__
+                logger = logging.getLogger(func.__module__)
 
-            # Start tracking
-            start_time = time.time()
-            logger.info(f"Starting operation: {func_name}")
+                # Start tracking
+                start_time = time.time()
+                logger.info(f"Starting operation: {func_name}")
 
-            try:
-                # Execute function
-                result = func(*args, **kwargs)
-
-                # Calculate duration
-                duration = time.time() - start_time
-
-                # Log success
-                logger.info(
-                    f"Operation '{func_name}' completed successfully in {duration:.2f}s"
-                )
-
-                # Track in Application Insights
                 try:
-                    client = get_telemetry_client()
-                    client.track_metric(
-                        name=f"{func_name}_duration",
-                        value=duration,
-                        properties={"status": "success"}
+                    # Execute async function
+                    result = await func(*args, **kwargs)
+
+                    # Calculate duration
+                    duration = time.time() - start_time
+
+                    # Log success
+                    logger.info(
+                        f"Operation '{func_name}' completed successfully in {duration:.2f}s"
                     )
-                    client.flush()
-                except:
-                    pass  # Don't fail if telemetry fails
 
-                return result
+                    # Track in Application Insights
+                    try:
+                        client = get_telemetry_client()
+                        client.track_metric(
+                            name=f"{func_name}_duration",
+                            value=duration,
+                            properties={"status": "success"}
+                        )
+                        client.flush()
+                    except:
+                        pass  # Don't fail if telemetry fails
 
-            except Exception as e:
-                # Calculate duration
-                duration = time.time() - start_time
+                    return result
 
-                # Log error
-                logger.error(
-                    f"Operation '{func_name}' failed after {duration:.2f}s: {e}"
-                )
+                except Exception as e:
+                    # Calculate duration
+                    duration = time.time() - start_time
 
-                # Track error in Application Insights
+                    # Log error
+                    logger.error(
+                        f"Operation '{func_name}' failed after {duration:.2f}s: {e}"
+                    )
+
+                    # Track error in Application Insights
+                    try:
+                        client = get_telemetry_client()
+                        client.track_exception()
+                        client.track_metric(
+                            name=f"{func_name}_duration",
+                            value=duration,
+                            properties={"status": "error"}
+                        )
+                        client.flush()
+                    except:
+                        pass  # Don't fail if telemetry fails
+
+                    # Re-raise the exception
+                    raise
+
+            return async_wrapper
+        else:
+            # Sync wrapper (original code)
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs) -> Any:
+                func_name = operation_name or func.__name__
+                logger = logging.getLogger(func.__module__)
+
+                # Start tracking
+                start_time = time.time()
+                logger.info(f"Starting operation: {func_name}")
+
                 try:
-                    client = get_telemetry_client()
-                    client.track_exception()
-                    client.track_metric(
-                        name=f"{func_name}_duration",
-                        value=duration,
-                        properties={"status": "error"}
+                    # Execute function
+                    result = func(*args, **kwargs)
+
+                    # Calculate duration
+                    duration = time.time() - start_time
+
+                    # Log success
+                    logger.info(
+                        f"Operation '{func_name}' completed successfully in {duration:.2f}s"
                     )
-                    client.flush()
-                except:
-                    pass  # Don't fail if telemetry fails
 
-                # Re-raise the exception
-                raise
+                    # Track in Application Insights
+                    try:
+                        client = get_telemetry_client()
+                        client.track_metric(
+                            name=f"{func_name}_duration",
+                            value=duration,
+                            properties={"status": "success"}
+                        )
+                        client.flush()
+                    except:
+                        pass  # Don't fail if telemetry fails
 
-        return wrapper
+                    return result
+
+                except Exception as e:
+                    # Calculate duration
+                    duration = time.time() - start_time
+
+                    # Log error
+                    logger.error(
+                        f"Operation '{func_name}' failed after {duration:.2f}s: {e}"
+                    )
+
+                    # Track error in Application Insights
+                    try:
+                        client = get_telemetry_client()
+                        client.track_exception()
+                        client.track_metric(
+                            name=f"{func_name}_duration",
+                            value=duration,
+                            properties={"status": "error"}
+                        )
+                        client.flush()
+                    except:
+                        pass  # Don't fail if telemetry fails
+
+                    # Re-raise the exception
+                    raise
+
+            return sync_wrapper
+            
     return decorator
 
 
