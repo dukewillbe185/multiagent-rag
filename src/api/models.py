@@ -6,17 +6,46 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
+# Chunk Information Model
+class ChunkInfo(BaseModel):
+    """Detailed information about a retrieved chunk."""
+    chunk_id: str = Field(..., description="The ID from Azure Search index")
+    source_file: str = Field(..., description="Source file name")
+    chunk_index: int = Field(..., description="Chunk position in the document")
+    score: float = Field(..., description="Search score (vector similarity + BM25 if hybrid)")
+    content_preview: str = Field(..., description="First 200 characters of the chunk")
+    full_content: str = Field(..., description="Full chunk text for transparency")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "chunk_id": "doc_pdf_chunk_5",
+                "source_file": "document.pdf",
+                "chunk_index": 5,
+                "score": 0.8542,
+                "content_preview": "Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience...",
+                "full_content": "Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience without being explicitly programmed. It focuses on developing computer programs that can access data and use it to learn for themselves."
+            }
+        }
+
+
 # Request Models
 class QueryRequest(BaseModel):
     """Request model for query endpoint."""
     question: str = Field(..., min_length=1, description="User's question")
-    top_k: Optional[int] = Field(None, ge=1, le=20, description="Number of chunks to retrieve")
+    session_id: str = Field(..., min_length=1, description="Session identifier provided by backend")
+    top_k: Optional[int] = Field(5, ge=1, le=20, description="Number of chunks to retrieve")
+    user_id: Optional[str] = Field(None, description="Optional user identifier for tracking")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Optional additional context")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "question": "What is machine learning?",
-                "top_k": 5
+                "session_id": "session_12345",
+                "top_k": 5,
+                "user_id": "user_67890",
+                "metadata": {"source": "web_app"}
             }
         }
 
@@ -49,9 +78,13 @@ class QueryResponse(BaseModel):
     question: str = Field(..., description="Original question")
     answer: str = Field(..., description="Generated answer")
     intent: str = Field(..., description="Identified intent")
+    session_id: str = Field(..., description="Session identifier echoed back for tracking")
+    conversation_turn: int = Field(..., description="Turn number in this session")
     chunks_retrieved: int = Field(..., description="Number of chunks retrieved")
+    retrieved_chunks: List[ChunkInfo] = Field(..., description="Detailed chunk information")
     sources: List[str] = Field(..., description="List of source files")
     processing_time_seconds: float = Field(..., description="Query processing time")
+    guardrail_passed: bool = Field(..., description="Whether question passed guardrail check")
 
     class Config:
         json_schema_extra = {
@@ -60,9 +93,22 @@ class QueryResponse(BaseModel):
                 "question": "What is machine learning?",
                 "answer": "Machine learning is a subset of artificial intelligence...",
                 "intent": "definition",
+                "session_id": "session_12345",
+                "conversation_turn": 1,
                 "chunks_retrieved": 5,
+                "retrieved_chunks": [
+                    {
+                        "chunk_id": "doc_pdf_chunk_5",
+                        "source_file": "document.pdf",
+                        "chunk_index": 5,
+                        "score": 0.8542,
+                        "content_preview": "Machine learning is a subset of artificial intelligence...",
+                        "full_content": "Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience without being explicitly programmed."
+                    }
+                ],
                 "sources": ["document.pdf"],
-                "processing_time_seconds": 2.3
+                "processing_time_seconds": 2.3,
+                "guardrail_passed": True
             }
         }
 

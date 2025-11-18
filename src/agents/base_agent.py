@@ -122,14 +122,32 @@ class BaseAgent:
         """
         raise NotImplementedError("Subclasses must implement execute()")
 
-    def log_info(self, message: str):
-        """Log info message with agent name prefix."""
-        logger.info(f"[{self.agent_name}] {message}")
+    def log_info(self, message: str, **kwargs):
+        """
+        Log info message with agent name prefix.
 
-    def log_warning(self, message: str):
-        """Log warning message with agent name prefix."""
-        logger.warning(f"[{self.agent_name}] {message}")
+        Args:
+            message: Log message
+            **kwargs: Additional structured logging data (e.g., session_id)
+        """
+        logger.info(f"[{self.agent_name}] {message}", extra=kwargs if kwargs else None)
 
-    def log_error(self, message: str):
-        """Log error message with agent name prefix."""
-        logger.error(f"[{self.agent_name}] {message}")
+    def log_warning(self, message: str, **kwargs):
+        """
+        Log warning message with agent name prefix.
+
+        Args:
+            message: Log message
+            **kwargs: Additional structured logging data (e.g., session_id)
+        """
+        logger.warning(f"[{self.agent_name}] {message}", extra=kwargs if kwargs else None)
+
+    def log_error(self, message: str, **kwargs):
+        """
+        Log error message with agent name prefix.
+
+        Args:
+            message: Log message
+            **kwargs: Additional structured logging data (e.g., session_id)
+        """
+        logger.error(f"[{self.agent_name}] {message}", extra=kwargs if kwargs else None)
