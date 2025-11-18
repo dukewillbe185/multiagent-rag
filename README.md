@@ -33,24 +33,27 @@ This project implements a sophisticated RAG system that:
 
 ### Multi-Agent Workflow
 
-The system uses **LangGraph** to orchestrate a 3-agent workflow:
+The system uses **LangGraph** to orchestrate a 4-agent workflow with guardrails:
 
 ```
 User Question
      ↓
+[Guardrail Agent] → Validates question (relevant/irrelevant/unsafe)
+     ↓ (if passed)
 [Supervisor Retrieval Agent]
      ↓ (retrieve relevant chunks)
 [Intent Identifier Agent]
      ↓ (identify user intent)
-[Answer Generator Agent]
+[Answer Generator Agent] → Uses conversation memory
      ↓
 Final Answer
 ```
 
 **Agent Roles:**
-1. **Supervisor Retrieval Agent** - Retrieves relevant document chunks from Azure AI Search
-2. **Intent Identifier Agent** - Identifies user's question intent (definition, explanation, etc.)
-3. **Answer Generator Agent** - Generates comprehensive answer using retrieved context
+1. **Guardrail Agent** - Validates questions before processing (filters irrelevant/unsafe queries)
+2. **Supervisor Retrieval Agent** - Retrieves relevant document chunks from Azure AI Search
+3. **Intent Identifier Agent** - Identifies user's question intent (definition, explanation, etc.)
+4. **Answer Generator Agent** - Generates comprehensive answer using retrieved context and conversation history
 
 ### Data Pipeline
 
@@ -73,16 +76,50 @@ PDF Document
 - **Intelligent Chunking** - LangChain RecursiveCharacterTextSplitter with configurable size and overlap
 - **Vector Embeddings** - Azure AI Foundry text-embedding-ada-002 (1536 dimensions)
 - **Hybrid Search** - Combines vector similarity and keyword matching (BM25)
-- **Multi-Agent RAG** - LangGraph-powered 3-agent workflow
+- **Multi-Agent RAG** - LangGraph-powered 4-agent workflow with guardrails
 - **Intent Recognition** - Automatic classification of user intent
-- **Source Citation** - Answers include source references
+- **Source Citation** - Answers include source references with detailed chunk information
+
+### 🆕 New Production Features
+
+#### Guardrail System
+- **Question Validation** - Filters irrelevant and unsafe questions before processing
+- **Configurable Strictness** - Low, medium, or high guardrail sensitivity
+- **Detailed Logging** - All guardrail decisions logged with reasons
+- **Rejection Messages** - User-friendly messages for rejected queries
+
+#### Session Management & Conversation Memory
+- **Session Tracking** - Every query includes a session_id for conversation continuity
+- **Multi-Turn Conversations** - Remembers previous question and answer (N-1 turn)
+- **Follow-up Support** - Handle questions like "tell me more" or "what did I just ask?"
+- **Automatic Cleanup** - Sessions expire after 30 minutes of inactivity
+- **In-Memory Storage** - Fast, efficient session management without external databases
+
+#### Enhanced Retrieval Transparency
+- **Detailed Chunk Information** - Every retrieved chunk includes:
+  - Chunk ID from Azure Search index
+  - Source file name
+  - Chunk position (index)
+  - Search score (hybrid similarity)
+  - Content preview (200 chars)
+  - Full content for transparency
+- **Retrieval Metrics** - Average scores, chunk counts tracked per query
+
+#### Error Handling & Reliability
+- **Retry Logic** - Exponential backoff for Azure API calls (max 3 retries)
+- **Specific Error Types** - GuardrailRejectionError, RetrievalError, GenerationError, etc.
+- **User-Friendly Messages** - Clear error messages distinguishing:
+  - Guardrail rejection
+  - Retrieval failures
+  - Generation errors
 
 ### Infrastructure
 - **Automatic Index Creation** - Programmatically creates Azure AI Search index if not exists
-- **Monitoring** - Azure Application Insights integration
+- **Monitoring** - Azure Application Insights integration with session_id tracking
 - **REST API** - FastAPI backend with Swagger documentation
 - **CLI Tools** - Command-line interface for all operations
 - **Security** - Environment-based configuration, no hardcoded secrets
+- **Background Tasks** - Automatic session cleanup every 5 minutes
 
 ## Technology Stack
 
@@ -194,6 +231,20 @@ AZURE_SEARCH_INDEX_NAME=rag-documents-index
 
 # Azure Application Insights
 APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
+
+# Application Settings
+CHUNK_SIZE=1200
+CHUNK_OVERLAP=0.2
+RETRIEVAL_TOP_K=5
+LLM_TEMPERATURE=0.7
+
+# 🆕 Guardrail Settings
+GUARDRAIL_ENABLED=true
+GUARDRAIL_STRICTNESS=medium  # low, medium, or high
+
+# 🆕 Session Management
+SESSION_TIMEOUT_MINUTES=30
+CONVERSATION_MEMORY_TURNS=1  # Currently only supports 1 (previous turn)
 ```
 
 ### 3. Important Notes on Azure AI Foundry
@@ -332,21 +383,33 @@ curl -X POST "http://localhost:8000/api/v1/upload" \
 }
 ```
 
-#### Query System
+#### Query System 🆕 Enhanced
 ```http
 POST /api/v1/query
 Content-Type: application/json
 ```
 
-Ask a question using the multi-agent RAG system.
+Ask a question using the multi-agent RAG system with session management and conversation memory.
 
 **Request:**
 ```json
 {
   "question": "What is machine learning?",
-  "top_k": 5
+  "session_id": "session_12345",
+  "top_k": 5,
+  "user_id": "user_67890",
+  "metadata": {"source": "web_app"}
 }
 ```
+
+**Required Fields:**
+- `question` (string): User's question
+- `session_id` (string): Session identifier (provided by backend)
+
+**Optional Fields:**
+- `top_k` (integer, 1-20, default: 5): Number of chunks to retrieve
+- `user_id` (string): Optional user identifier for tracking
+- `metadata` (object): Additional context
 
 **Example using curl:**
 ```bash
@@ -355,21 +418,63 @@ curl -X POST "http://localhost:8000/api/v1/query" \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What is machine learning?",
+    "session_id": "session_12345",
     "top_k": 5
   }'
 ```
 
-**Response:**
+**Response (Success):**
 ```json
 {
   "success": true,
   "question": "What is machine learning?",
   "answer": "Machine learning is a subset of artificial intelligence...",
   "intent": "definition",
+  "session_id": "session_12345",
+  "conversation_turn": 1,
   "chunks_retrieved": 5,
+  "retrieved_chunks": [
+    {
+      "chunk_id": "doc_pdf_chunk_5",
+      "source_file": "doc.pdf",
+      "chunk_index": 5,
+      "score": 0.8542,
+      "content_preview": "Machine learning is a subset of artificial intelligence...",
+      "full_content": "Machine learning is a subset of artificial intelligence that enables..."
+    }
+  ],
   "sources": ["doc.pdf"],
-  "processing_time_seconds": 2.3
+  "processing_time_seconds": 2.3,
+  "guardrail_passed": true
 }
+```
+
+**Response (Guardrail Rejection):**
+```json
+{
+  "success": false,
+  "question": "What's the weather today?",
+  "answer": "Your question doesn't appear to be related to the indexed documents.",
+  "intent": "rejected",
+  "session_id": "session_12345",
+  "conversation_turn": 1,
+  "chunks_retrieved": 0,
+  "retrieved_chunks": [],
+  "sources": [],
+  "processing_time_seconds": 0.5,
+  "guardrail_passed": false
+}
+```
+
+**Follow-up Question Example:**
+```bash
+# First question
+curl -X POST "http://localhost:8000/api/v1/query" \
+  -d '{"question": "What is AI?", "session_id": "session_123"}'
+
+# Follow-up question (uses conversation memory)
+curl -X POST "http://localhost:8000/api/v1/query" \
+  -d '{"question": "Tell me more about that", "session_id": "session_123"}'
 ```
 
 #### Create Index

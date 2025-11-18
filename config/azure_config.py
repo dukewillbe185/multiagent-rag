@@ -133,6 +133,14 @@ class AzureConfig:
             self.retrieval_top_k = int(_get_optional_env("RETRIEVAL_TOP_K", "5"))
             self.llm_temperature = float(_get_optional_env("LLM_TEMPERATURE", "0.7"))
 
+            # Guardrail Settings
+            self.guardrail_enabled = _get_optional_env("GUARDRAIL_ENABLED", "true").lower() == "true"
+            self.guardrail_strictness = _get_optional_env("GUARDRAIL_STRICTNESS", "medium").lower()
+
+            # Session Management Settings
+            self.session_timeout_minutes = int(_get_optional_env("SESSION_TIMEOUT_MINUTES", "30"))
+            self.conversation_memory_turns = int(_get_optional_env("CONVERSATION_MEMORY_TURNS", "1"))
+
             # Validate configuration
             self._validate()
 
@@ -172,6 +180,25 @@ class AzureConfig:
         if not 0.0 <= self.llm_temperature <= 2.0:
             raise ConfigurationError(f"LLM_TEMPERATURE must be between 0.0 and 2.0, got {self.llm_temperature}")
 
+        # Validate guardrail settings
+        if self.guardrail_strictness not in ["low", "medium", "high"]:
+            raise ConfigurationError(
+                f"GUARDRAIL_STRICTNESS must be 'low', 'medium', or 'high', got '{self.guardrail_strictness}'"
+            )
+
+        # Validate session settings
+        if not 1 <= self.session_timeout_minutes <= 1440:  # 1 minute to 24 hours
+            raise ConfigurationError(
+                f"SESSION_TIMEOUT_MINUTES must be between 1 and 1440, got {self.session_timeout_minutes}"
+            )
+
+        if self.conversation_memory_turns != 1:
+            logger.warning(
+                f"CONVERSATION_MEMORY_TURNS is set to {self.conversation_memory_turns}, "
+                f"but currently only 1 (previous turn) is supported. Using 1."
+            )
+            self.conversation_memory_turns = 1
+
     def _log_config(self):
         """Log configuration (with masked secrets) for debugging."""
         logger.info("=" * 60)
@@ -200,7 +227,28 @@ class AzureConfig:
         logger.info(f"Chunk Overlap: {self.chunk_overlap}")
         logger.info(f"Retrieval Top K: {self.retrieval_top_k}")
         logger.info(f"LLM Temperature: {self.llm_temperature}")
+        logger.info("-" * 60)
+        logger.info(f"Guardrail Enabled: {self.guardrail_enabled}")
+        logger.info(f"Guardrail Strictness: {self.guardrail_strictness}")
+        logger.info("-" * 60)
+        logger.info(f"Session Timeout: {self.session_timeout_minutes} minutes")
+        logger.info(f"Conversation Memory Turns: {self.conversation_memory_turns}")
         logger.info("=" * 60)
+
+    def get_optional_env(self, var_name: str, default: str) -> str:
+        """
+        Get an optional environment variable with a default value.
+
+        This is a wrapper around _get_optional_env for external use.
+
+        Args:
+            var_name: Name of the environment variable
+            default: Default value if not set
+
+        Returns:
+            Value of the environment variable or default
+        """
+        return _get_optional_env(var_name, default)
 
 
 # Global configuration instance

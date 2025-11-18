@@ -17,14 +17,16 @@ from src.api.models import (
     UploadResponse,
     HealthResponse,
     IndexStatusResponse,
-    ErrorResponse
+    ErrorResponse,
+    ChunkInfo
 )
 from src.data_pipeline.document_extractor import DocumentExtractor
 from src.data_pipeline.text_chunker import TextChunker
 from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
-from src.agents.rag_agent import MultiAgentRAG
+from src.agents.rag_agent import MultiAgentRAG, RagState
 from src.monitoring.logger import track_performance, track_event, track_metric
+from src.utils.session_memory import get_session_manager
 from config import get_config
 
 logger = logging.getLogger(__name__)
@@ -237,56 +239,248 @@ async def query_documents(request: QueryRequest):
     Query the RAG system with a question.
 
     This endpoint:
-    1. Retrieves relevant chunks from Azure AI Search
-    2. Identifies user intent
-    3. Generates answer using multi-agent system
+    1. Validates question through guardrail agent
+    2. Retrieves session context (previous Q&A if exists)
+    3. Retrieves relevant chunks from Azure AI Search
+    4. Identifies user intent
+    5. Generates answer using multi-agent system with conversation memory
+    6. Updates session with current Q&A
 
     Args:
-        request: Query request with question and optional top_k
+        request: Query request with question, session_id, and optional top_k, user_id, metadata
 
     Returns:
-        Generated answer with metadata
+        Generated answer with detailed chunk information and session context
     """
     start_time = time.time()
+    session_id = request.session_id
+    question = request.question
 
-    logger.info(f"Query received: {request.question}")
+    logger.info(
+        f"[{session_id}] Query received: {question[:100]}...",
+        extra={"session_id": session_id, "question": question}
+    )
 
-    # Track event
-    track_event("query_started", {"question": request.question[:100]})
+    # Track event with session_id
+    track_event("query_started", {
+        "session_id": session_id,
+        "question": question[:100],
+        "user_id": request.user_id
+    })
 
     try:
-        # Initialize RAG system
-        rag_system = MultiAgentRAG(top_k=request.top_k or 5)
+        # Get session manager
+        config = get_config()
+        session_timeout = config.get_optional_env("SESSION_TIMEOUT_MINUTES", "30")
+        session_manager = get_session_manager(timeout_minutes=int(session_timeout))
 
-        # Process query
-        result = rag_system.query(request.question)
+        # Retrieve session context (previous turn)
+        session_context = session_manager.get_session(session_id)
+
+        previous_question = ""
+        previous_answer = ""
+        conversation_turn = 1
+
+        if session_context:
+            previous_question = session_context.get("previous_question", "")
+            previous_answer = session_context.get("previous_answer", "")
+            conversation_turn = session_context.get("turn_count", 0) + 1
+
+            logger.info(
+                f"[{session_id}] Session context loaded, turn: {conversation_turn}",
+                extra={
+                    "session_id": session_id,
+                    "turn": conversation_turn,
+                    "has_previous_context": bool(previous_question)
+                }
+            )
+        else:
+            logger.info(
+                f"[{session_id}] New session started",
+                extra={"session_id": session_id}
+            )
+
+        # Get guardrail settings from config
+        guardrail_enabled = config.get_optional_env("GUARDRAIL_ENABLED", "true").lower() == "true"
+        guardrail_strictness = config.get_optional_env("GUARDRAIL_STRICTNESS", "medium")
+
+        # Initialize RAG system
+        rag_system = MultiAgentRAG(
+            top_k=request.top_k or 5,
+            guardrail_enabled=guardrail_enabled,
+            guardrail_strictness=guardrail_strictness
+        )
+
+        # Create initial state with session context
+        initial_state = RagState(
+            session_id=session_id,
+            user_id=request.user_id or "",
+            current_question=question,
+            previous_question=previous_question,
+            previous_answer=previous_answer,
+            retrieved_chunks=[],
+            retrieved_metadata=[],
+            intent="",
+            answer="",
+            conversation_turn=conversation_turn,
+            guardrail_passed=False,
+            guardrail_reason=""
+        )
+
+        # Run the workflow
+        logger.info(f"[{session_id}] Starting RAG workflow...")
+        result = rag_system.graph.invoke(initial_state)
+
+        # Check if guardrail passed
+        guardrail_passed = result.get("guardrail_passed", True)
+        guardrail_reason = result.get("guardrail_reason", "")
+
+        if not guardrail_passed:
+            # Guardrail rejected the question
+            processing_time = time.time() - start_time
+
+            rejection_messages = {
+                "irrelevant": "Your question doesn't appear to be related to the indexed documents. Please ask questions relevant to the available content.",
+                "unsafe": "Your question has been flagged as inappropriate or potentially unsafe. Please rephrase your question."
+            }
+
+            # Determine rejection type from reason
+            rejection_type = "irrelevant"
+            if "unsafe" in guardrail_reason.lower() or "jailbreak" in guardrail_reason.lower():
+                rejection_type = "unsafe"
+
+            answer = rejection_messages.get(rejection_type, "Your question could not be processed. Please try rephrasing.")
+
+            logger.warning(
+                f"[{session_id}] Guardrail rejected question: {guardrail_reason}",
+                extra={
+                    "session_id": session_id,
+                    "guardrail_decision": "rejected",
+                    "guardrail_reason": guardrail_reason,
+                    "question": question
+                }
+            )
+
+            track_event("query_guardrail_rejected", {
+                "session_id": session_id,
+                "question": question[:100],
+                "reason": guardrail_reason,
+                "rejection_type": rejection_type
+            })
+
+            return QueryResponse(
+                success=False,
+                question=question,
+                answer=answer,
+                intent="rejected",
+                session_id=session_id,
+                conversation_turn=conversation_turn,
+                chunks_retrieved=0,
+                retrieved_chunks=[],
+                sources=[],
+                processing_time_seconds=round(processing_time, 2),
+                guardrail_passed=False
+            )
+
+        # Guardrail passed - process normally
+        logger.info(
+            f"[{session_id}] Guardrail passed",
+            extra={"session_id": session_id, "guardrail_decision": "approved"}
+        )
+
+        # Build ChunkInfo objects from retrieved metadata
+        retrieved_chunks_info = []
+        for meta in result.get("retrieved_metadata", []):
+            content = meta.get("content", "")
+            chunk_info = ChunkInfo(
+                chunk_id=meta.get("chunk_id", "unknown"),
+                source_file=meta.get("source_file", "unknown"),
+                chunk_index=meta.get("chunk_index", 0),
+                score=meta.get("score", 0.0),
+                content_preview=content[:200] if content else "",
+                full_content=content
+            )
+            retrieved_chunks_info.append(chunk_info)
+
+        # Extract sources
+        sources = list(set(
+            meta.get("source_file", "Unknown")
+            for meta in result.get("retrieved_metadata", [])
+        ))
 
         # Calculate processing time
         processing_time = time.time() - start_time
 
-        # Track metrics
-        track_metric("query_processing_time", processing_time, {"intent": result['intent']})
-        track_metric("chunks_retrieved", result['chunks_retrieved'], {"intent": result['intent']})
-        track_event("query_completed", {
-            "question": request.question[:100],
+        # Update session with current Q&A
+        session_manager.update_session(
+            session_id=session_id,
+            question=question,
+            answer=result["answer"],
+            user_id=request.user_id,
+            metadata=request.metadata
+        )
+
+        logger.info(
+            f"[{session_id}] Session updated with current Q&A",
+            extra={"session_id": session_id, "turn": conversation_turn}
+        )
+
+        # Track metrics with session_id
+        track_metric("query_processing_time", processing_time, {
+            "session_id": session_id,
             "intent": result['intent'],
-            "chunks_retrieved": result['chunks_retrieved']
+            "turn": conversation_turn
         })
+        track_metric("chunks_retrieved", len(retrieved_chunks_info), {
+            "session_id": session_id,
+            "intent": result['intent']
+        })
+
+        # Calculate average score
+        avg_score = sum(c.score for c in retrieved_chunks_info) / len(retrieved_chunks_info) if retrieved_chunks_info else 0.0
+
+        track_event("query_completed", {
+            "session_id": session_id,
+            "question": question[:100],
+            "intent": result['intent'],
+            "chunks_retrieved": len(retrieved_chunks_info),
+            "avg_retrieval_score": round(avg_score, 4),
+            "turn": conversation_turn,
+            "had_previous_context": bool(previous_question)
+        })
+
+        logger.info(
+            f"[{session_id}] Query processing complete",
+            extra={
+                "session_id": session_id,
+                "turn": conversation_turn,
+                "chunks_retrieved": len(retrieved_chunks_info),
+                "processing_time": round(processing_time, 2)
+            }
+        )
 
         return QueryResponse(
             success=True,
-            question=result['question'],
+            question=question,
             answer=result['answer'],
             intent=result['intent'],
-            chunks_retrieved=result['chunks_retrieved'],
-            sources=result['sources'],
-            processing_time_seconds=round(processing_time, 2)
+            session_id=session_id,
+            conversation_turn=conversation_turn,
+            chunks_retrieved=len(retrieved_chunks_info),
+            retrieved_chunks=retrieved_chunks_info,
+            sources=sources,
+            processing_time_seconds=round(processing_time, 2),
+            guardrail_passed=True
         )
 
     except Exception as e:
-        logger.error(f"Error processing query: {e}")
+        logger.error(
+            f"[{session_id}] Error processing query: {e}",
+            extra={"session_id": session_id, "error": str(e)}
+        )
         track_event("query_failed", {
-            "question": request.question[:100],
+            "session_id": session_id,
+            "question": question[:100],
             "error": str(e)
         })
 
