@@ -196,8 +196,18 @@ class AzureSearchRetriever:
         documents = []
 
         for result in results:
-            # Extract score (if available)
-            score = getattr(result, '@search.score', None)
+            # Extract score from Azure Search results
+            # Try different possible score field names
+            score = None
+            if hasattr(result, '__getitem__'):  # Dictionary-like object
+                # Azure Search returns score with @ prefix
+                score = result.get('@search.score') or result.get('search_score') or result.get('score')
+            else:  # Object with attributes
+                score = getattr(result, 'score', None)
+
+            # Log if score is still None for debugging
+            if score is None:
+                logger.debug(f"No score found for result: {result.get('id', 'unknown')}")
 
             # Parse metadata JSON
             metadata_str = result.get('metadata', '{}')
@@ -212,7 +222,7 @@ class AzureSearchRetriever:
                 "content": result.get('content'),
                 "source_file": result.get('source_file'),
                 "chunk_index": result.get('chunk_index'),
-                "score": score,
+                "score": score if score is not None else 0.0,  # Default to 0.0 if no score
                 "metadata": metadata
             }
 
