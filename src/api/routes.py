@@ -392,11 +392,16 @@ async def query_documents(request: QueryRequest):
         retrieved_chunks_info = []
         for meta in result.get("retrieved_metadata", []):
             content = meta.get("content", "")
+            # Handle None scores from Azure Search
+            score = meta.get("score")
+            if score is None:
+                score = 0.0
+
             chunk_info = ChunkInfo(
                 chunk_id=meta.get("chunk_id", "unknown"),
                 source_file=meta.get("source_file", "unknown"),
-                chunk_index=meta.get("chunk_index", 0),
-                score=meta.get("score", 0.0),
+                chunk_index=meta.get("chunk_index") or 0,
+                score=score,
                 content_preview=content[:200] if content else "",
                 full_content=content
             )
