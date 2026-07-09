@@ -84,7 +84,21 @@ class QueryResponse(BaseModel):
     retrieved_chunks: List[ChunkInfo] = Field(..., description="Detailed chunk information")
     sources: List[str] = Field(..., description="List of source files")
     processing_time_seconds: float = Field(..., description="Query processing time")
-    guardrail_passed: bool = Field(..., description="Whether question passed guardrail check")
+    guardrail_passed: bool = Field(..., description="Whether question passed the relevance guardrail check")
+    input_guardrail: str = Field(
+        "not evaluated",
+        description="Input guardrail (Azure AI Content Safety) result: 'nothing detected', 'detected', or 'not evaluated'"
+    )
+    output_guardrail: str = Field(
+        "not evaluated",
+        description="Output guardrail (Azure AI Content Safety) result: 'nothing detected', 'detected', or 'not evaluated'"
+    )
+    input_guardrail_details: Optional[Dict[str, Any]] = Field(
+        None, description="Input guardrail category severities and triggers (Content Safety)"
+    )
+    output_guardrail_details: Optional[Dict[str, Any]] = Field(
+        None, description="Output guardrail category severities and triggers (Content Safety)"
+    )
 
     class Config:
         json_schema_extra = {
@@ -93,6 +107,8 @@ class QueryResponse(BaseModel):
                 "question": "What is machine learning?",
                 "answer": "Machine learning is a subset of artificial intelligence...",
                 "intent": "definition",
+                "input_guardrail": "nothing detected",
+                "output_guardrail": "nothing detected",
                 "session_id": "session_12345",
                 "conversation_turn": 1,
                 "chunks_retrieved": 5,

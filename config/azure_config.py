@@ -141,6 +141,15 @@ class AzureConfig:
             self.session_timeout_minutes = int(_get_optional_env("SESSION_TIMEOUT_MINUTES", "30"))
             self.conversation_memory_turns = int(_get_optional_env("CONVERSATION_MEMORY_TURNS", "1"))
 
+            # Azure AI Content Safety Guardrails (input + output)
+            # Optional: if endpoint/key are unset, guardrails pass through (no-op).
+            self.content_safety_endpoint = _get_optional_env("AZURE_CONTENT_SAFETY_ENDPOINT", "").rstrip('/')
+            self.content_safety_key = _get_optional_env("AZURE_CONTENT_SAFETY_KEY", "")
+            self.content_safety_api_version = _get_optional_env("AZURE_CONTENT_SAFETY_API_VERSION", "2024-09-01")
+            self.content_safety_block_severity = int(_get_optional_env("AZURE_CONTENT_SAFETY_BLOCK_SEVERITY", "4"))
+            self.input_guardrail_enabled = _get_optional_env("INPUT_GUARDRAIL_ENABLED", "true").lower() == "true"
+            self.output_guardrail_enabled = _get_optional_env("OUTPUT_GUARDRAIL_ENABLED", "true").lower() == "true"
+
             # Validate configuration
             self._validate()
 
