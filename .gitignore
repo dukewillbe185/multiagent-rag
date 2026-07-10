@@ -61,3 +61,6 @@ tmp/
 
 # Uploaded files
 uploads/
+
+# local secret backups
+.env.old-backup*

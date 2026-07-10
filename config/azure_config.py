@@ -147,6 +147,16 @@ class AzureConfig:
             self.content_safety_key = _get_optional_env("AZURE_CONTENT_SAFETY_KEY", "")
             self.content_safety_api_version = _get_optional_env("AZURE_CONTENT_SAFETY_API_VERSION", "2024-09-01")
             self.content_safety_block_severity = int(_get_optional_env("AZURE_CONTENT_SAFETY_BLOCK_SEVERITY", "4"))
+            # Per-category severity thresholds (0/2/4/6). Default: strict on Hate/Sexual (2),
+            # lenient on SelfHarm/Violence (4) so legitimate insurance text (death / self-harm
+            # exclusions) is not false-flagged. Each falls back to the global threshold if unset.
+            _default_sev = str(self.content_safety_block_severity)
+            self.content_safety_category_thresholds = {
+                "Hate": int(_get_optional_env("AZURE_CONTENT_SAFETY_SEVERITY_HATE", "2")),
+                "Sexual": int(_get_optional_env("AZURE_CONTENT_SAFETY_SEVERITY_SEXUAL", "2")),
+                "SelfHarm": int(_get_optional_env("AZURE_CONTENT_SAFETY_SEVERITY_SELFHARM", "4")),
+                "Violence": int(_get_optional_env("AZURE_CONTENT_SAFETY_SEVERITY_VIOLENCE", "4")),
+            }
             self.input_guardrail_enabled = _get_optional_env("INPUT_GUARDRAIL_ENABLED", "true").lower() == "true"
             self.output_guardrail_enabled = _get_optional_env("OUTPUT_GUARDRAIL_ENABLED", "true").lower() == "true"
 

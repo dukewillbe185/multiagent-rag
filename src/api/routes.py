@@ -26,6 +26,12 @@ from src.data_pipeline.text_chunker import TextChunker
 from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
 from src.agents.rag_agent import MultiAgentRAG, RagState
+from src.guardrails.content_safety import (
+    get_guardrail,
+    STATUS_CLEAN,
+    STATUS_DETECTED,
+    STATUS_SKIPPED,
+)
 from src.monitoring.logger import track_performance, track_event, track_metric
 from src.monitoring.agent_logger import log_request_start, log_request_complete
 from src.utils.session_memory import get_session_manager
@@ -306,6 +312,52 @@ async def query_documents(request: QueryRequest):
         # Log request start with structured logging for Application Insights
         log_request_start(session_id, conversation_turn, question, request_id)
 
+        # ---- INPUT GUARDRAIL (Azure AI Content Safety) ----
+        # Runs before any LLM/retrieval work. If it fires, we return immediately.
+        guardrail = get_guardrail()
+        input_gr = guardrail.check_input(question) if config.input_guardrail_enabled else None
+        input_status = input_gr.status if input_gr else STATUS_SKIPPED
+        input_details = input_gr.to_details() if input_gr else None
+
+        if input_gr and input_gr.detected:
+            processing_time = time.time() - start_time
+            logger.warning(
+                f"[{session_id}] INPUT guardrail blocked question: {input_gr.triggered}",
+                extra={"session_id": session_id, "input_guardrail": "detected",
+                       "triggered": input_gr.triggered}
+            )
+            track_event("input_guardrail_blocked", {
+                "session_id": session_id,
+                "question": question[:100],
+                "triggered": ",".join(input_gr.triggered),
+                "jailbreak": input_gr.jailbreak,
+            })
+            log_request_complete(
+                request_id=request_id, session_id=session_id, duration=processing_time,
+                guardrail_passed=False, agents_executed=["InputGuardrail"],
+                chunks_retrieved=0, success=True, error=None,
+            )
+            return QueryResponse(
+                success=False,
+                question=question,
+                answer=(
+                    "Your message was blocked by the input safety guardrail "
+                    "(Azure AI Content Safety) and was not processed."
+                ),
+                intent="blocked",
+                session_id=session_id,
+                conversation_turn=conversation_turn,
+                chunks_retrieved=0,
+                retrieved_chunks=[],
+                sources=[],
+                processing_time_seconds=round(processing_time, 2),
+                guardrail_passed=False,
+                input_guardrail=STATUS_DETECTED,
+                output_guardrail=STATUS_SKIPPED,
+                input_guardrail_details=input_details,
+                output_guardrail_details=None,
+            )
+
         # Get guardrail settings from config
         guardrail_enabled = config.get_optional_env("GUARDRAIL_ENABLED", "true").lower() == "true"
         guardrail_strictness = config.get_optional_env("GUARDRAIL_STRICTNESS", "medium")
@@ -397,7 +449,11 @@ async def query_documents(request: QueryRequest):
                 retrieved_chunks=[],
                 sources=[],
                 processing_time_seconds=round(processing_time, 2),
-                guardrail_passed=False
+                guardrail_passed=False,
+                input_guardrail=input_status,
+                output_guardrail=STATUS_SKIPPED,
+                input_guardrail_details=input_details,
+                output_guardrail_details=None,
             )
 
         # Guardrail passed - process normally
@@ -405,6 +461,30 @@ async def query_documents(request: QueryRequest):
             f"[{session_id}] Guardrail passed",
             extra={"session_id": session_id, "guardrail_decision": "approved"}
         )
+
+        # ---- OUTPUT GUARDRAIL (Azure AI Content Safety) ----
+        # Check the generated answer before returning it to the user.
+        final_answer = result.get("answer", "")
+        output_gr = guardrail.check_output(final_answer) if config.output_guardrail_enabled else None
+        output_status = output_gr.status if output_gr else STATUS_SKIPPED
+        output_details = output_gr.to_details() if output_gr else None
+        output_blocked = bool(output_gr and output_gr.detected)
+
+        if output_blocked:
+            logger.warning(
+                f"[{session_id}] OUTPUT guardrail blocked answer: {output_gr.triggered}",
+                extra={"session_id": session_id, "output_guardrail": "detected",
+                       "triggered": output_gr.triggered}
+            )
+            track_event("output_guardrail_blocked", {
+                "session_id": session_id,
+                "question": question[:100],
+                "triggered": ",".join(output_gr.triggered),
+            })
+            final_answer = (
+                "The generated response was blocked by the output safety guardrail "
+                "(Azure AI Content Safety) before delivery."
+            )
 
         # Build ChunkInfo objects from retrieved metadata
         retrieved_chunks_info = []
@@ -434,11 +514,11 @@ async def query_documents(request: QueryRequest):
         # Calculate processing time
         processing_time = time.time() - start_time
 
-        # Update session with current Q&A
+        # Update session with current Q&A (store the guardrailed answer)
         session_manager.update_session(
             session_id=session_id,
             question=question,
-            answer=result["answer"],
+            answer=final_answer,
             user_id=request.user_id,
             metadata=request.metadata
         )
@@ -496,9 +576,9 @@ async def query_documents(request: QueryRequest):
         )
 
         return QueryResponse(
-            success=True,
+            success=not output_blocked,
             question=question,
-            answer=result['answer'],
+            answer=final_answer,
             intent=result['intent'],
             session_id=session_id,
             conversation_turn=conversation_turn,
@@ -506,7 +586,11 @@ async def query_documents(request: QueryRequest):
             retrieved_chunks=retrieved_chunks_info,
             sources=sources,
             processing_time_seconds=round(processing_time, 2),
-            guardrail_passed=True
+            guardrail_passed=True,
+            input_guardrail=input_status,
+            output_guardrail=output_status,
+            input_guardrail_details=input_details,
+            output_guardrail_details=output_details,
         )
 
     except Exception as e:

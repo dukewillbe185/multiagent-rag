@@ -214,32 +214,18 @@ class AzureSearchIndexer:
             ]
         )
 
-        # Configure semantic search for hybrid search
-        semantic_config = SemanticConfiguration(
-            name="semantic-config",
-            prioritized_fields=SemanticPrioritizedFields(
-                content_fields=[
-                    SemanticField(field_name="content")
-                ],
-                keywords_fields=[
-                    SemanticField(field_name="source_file")
-                ]
-            )
-        )
-
-        semantic_search = SemanticSearch(
-            configurations=[semantic_config]
-        )
-
+        # NOTE: Semantic search configuration intentionally omitted.
+        # The retriever uses vector + keyword (BM25) hybrid search only and never
+        # issues semantic queries, so a semantic config is unnecessary. Omitting it
+        # also lets the index be created on the Free tier (which has no semantic ranker).
         # Create the index
         index = SearchIndex(
             name=self.index_name,
             fields=fields,
-            vector_search=vector_search,
-            semantic_search=semantic_search
+            vector_search=vector_search
         )
 
-        logger.info("Index schema created with vector and semantic search configuration")
+        logger.info("Index schema created with vector search configuration (hybrid vector + keyword)")
         return index
 
     def index_documents(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
