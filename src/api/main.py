@@ -37,16 +37,34 @@ app = FastAPI(
 
     ## Architecture
 
-    The system uses a 3-agent workflow powered by LangGraph:
-    1. **Supervisor Retrieval Agent** - Retrieves relevant document chunks
-    2. **Intent Identifier Agent** - Identifies user's question intent
-    3. **Answer Generator Agent** - Generates comprehensive answers
+    The system uses a 4-agent workflow powered by LangGraph:
+    1. **Guardrail Agent** - Validates that the question is relevant/safe; rejects it
+       early and skips the rest of the workflow if not
+    2. **Supervisor Retrieval Agent** - Retrieves relevant document chunks
+    3. **Intent Identifier Agent** - Identifies user's question intent
+    4. **Answer Generator Agent** - Generates comprehensive answers
+
+    ## Safety Guardrails
+
+    Azure AI Content Safety wraps the agent workflow on both sides:
+
+    `question -> input guardrail -> [4-agent workflow] -> answer -> output guardrail -> user`
+
+    - **Input guardrail** - Text moderation (Hate / SelfHarm / Sexual / Violence) plus
+      Prompt Shields (jailbreak / prompt-injection), run before any LLM work. A hit
+      returns immediately without invoking the workflow.
+    - **Output guardrail** - Text moderation on the generated answer before delivery.
+
+    Both statuses are reported on every response via the `input_guardrail` and
+    `output_guardrail` fields ("nothing detected" / "detected" / "not evaluated"),
+    with per-category severities in the matching `*_details` field.
 
     ## Azure Services
 
     - **Azure AI Document Intelligence** - PDF text extraction
-    - **Azure AI Foundry** - Embeddings and GPT-4 (deployed models)
-    - **Azure AI Search** - Vector and hybrid search
+    - **Azure OpenAI** - Embeddings (text-embedding-ada-002) and chat completion (gpt-5-mini)
+    - **Azure AI Search** - Vector and keyword (BM25) hybrid search
+    - **Azure AI Content Safety** - Input/output guardrails
     - **Azure Application Insights** - Monitoring and logging
     """,
     version="1.0.0",

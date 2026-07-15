@@ -161,6 +161,7 @@ def test_query(question: str, top_k: int, logger):
         logger.info("\n" + "=" * 60)
         logger.info("RESPONSE")
         logger.info("=" * 60)
+        logger.info(f"Guardrail: {'PASSED' if response['guardrail_passed'] else 'REJECTED'} - {response['guardrail_reason']}")
         logger.info(f"Intent: {response['intent']}")
         logger.info(f"Chunks Retrieved: {response['chunks_retrieved']}")
         logger.info(f"Sources: {', '.join(response['sources'])}")

@@ -1,10 +1,14 @@
 """
 Multi-Agent RAG System using LangGraph.
 
-Implements a 3-agent workflow based on the blueprint:
-1. Supervisor Retrieval Agent - Retrieves relevant chunks
-2. Intent Identifier Agent - Identifies user intent
-3. Answer Generator Agent - Generates final answer
+Implements a 4-agent workflow based on the blueprint:
+1. Guardrail Agent - Validates the question is relevant/safe (routes to END if not)
+2. Supervisor Retrieval Agent - Retrieves relevant chunks
+3. Intent Identifier Agent - Identifies user intent
+4. Answer Generator Agent - Generates final answer
+
+Note: this is the in-graph relevance guardrail. The separate Azure AI Content Safety
+moderation guardrails wrap the whole graph at the API layer (src/api/routes.py).
 
 Uses LangGraph for orchestrating the agent workflow.
 """
@@ -597,37 +601,77 @@ class MultiAgentRAG:
 
         return graph
 
-    def query(self, question: str) -> Dict[str, Any]:
+    def query(self, question: str, session_id: str = None, user_id: str = "") -> Dict[str, Any]:
         """
         Process a question through the multi-agent workflow.
 
+        This is a single-turn convenience wrapper (no conversation memory). The API
+        layer invokes ``self.graph`` directly so it can carry session history and
+        wrap the workflow in Content Safety guardrails.
+
         Args:
             question: User's question
+            session_id: Session identifier; generated if not provided
+            user_id: Optional user identifier
 
         Returns:
             Dictionary containing:
                 - question: Original question
-                - answer: Generated answer
+                - answer: Generated answer, or a rejection message if the
+                  guardrail agent rejected the question
                 - intent: Identified intent
                 - chunks_retrieved: Number of chunks retrieved
                 - sources: List of source files
+                - guardrail_passed: Whether the guardrail agent allowed the question
+                - guardrail_reason: The guardrail agent's explanation
         """
+        import uuid
+
+        session_id = session_id or f"cli-{uuid.uuid4().hex[:8]}"
+
         logger.info("=" * 60)
         logger.info(f"Processing query: {question}")
         logger.info("=" * 60)
 
         try:
-            # Create initial state
+            # Create initial state (must populate every RagState field the agents read)
             initial_state = RagState(
-                question=question,
+                session_id=session_id,
+                user_id=user_id,
+                current_question=question,
+                previous_question="",
+                previous_answer="",
                 retrieved_chunks=[],
                 retrieved_metadata=[],
                 intent="",
-                answer=""
+                answer="",
+                conversation_turn=1,
+                guardrail_passed=False,
+                guardrail_reason=""
             )
 
             # Run the workflow
             result = self.graph.invoke(initial_state)
+
+            guardrail_passed = result.get("guardrail_passed", True)
+            guardrail_reason = result.get("guardrail_reason", "")
+
+            # A rejected question short-circuits to END, so no answer was generated.
+            if not guardrail_passed:
+                reason_lower = guardrail_reason.lower()
+                if "unsafe" in reason_lower or "jailbreak" in reason_lower:
+                    answer = (
+                        "Your question has been flagged as inappropriate or potentially "
+                        "unsafe. Please rephrase your question."
+                    )
+                else:
+                    answer = (
+                        "Your question doesn't appear to be related to the indexed "
+                        "documents. Please ask questions relevant to the available content."
+                    )
+                logger.warning(f"[{session_id}] Guardrail rejected question: {guardrail_reason}")
+            else:
+                answer = result.get("answer", "")
 
             # Extract sources
             sources = list(set(
@@ -637,11 +681,13 @@ class MultiAgentRAG:
 
             # Prepare response
             response = {
-                "question": result["question"],
-                "answer": result["answer"],
-                "intent": result["intent"],
+                "question": question,
+                "answer": answer,
+                "intent": result.get("intent", ""),
                 "chunks_retrieved": len(result.get("retrieved_chunks", [])),
-                "sources": sources
+                "sources": sources,
+                "guardrail_passed": guardrail_passed,
+                "guardrail_reason": guardrail_reason
             }
 
             logger.info("=" * 60)
@@ -657,7 +703,9 @@ class MultiAgentRAG:
                 "answer": f"Error processing query: {e}",
                 "intent": "error",
                 "chunks_retrieved": 0,
-                "sources": []
+                "sources": [],
+                "guardrail_passed": False,
+                "guardrail_reason": f"Error: {e}"
             }
 
 
@@ -700,6 +748,7 @@ if __name__ == "__main__":
             print("MULTI-AGENT RAG RESPONSE")
             print("=" * 60)
             print(f"Question: {response['question']}")
+            print(f"Guardrail: {'PASSED' if response['guardrail_passed'] else 'REJECTED'} - {response['guardrail_reason']}")
             print(f"Intent: {response['intent']}")
             print(f"Chunks Retrieved: {response['chunks_retrieved']}")
             print(f"Sources: {', '.join(response['sources'])}")
