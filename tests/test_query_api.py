@@ -8,14 +8,15 @@ from src.guardrails.content_safety import STATUS_DETECTED
 
 
 class FakeConfig:
-    def __init__(self, input_enabled=False):
+    def __init__(self, input_enabled=False, relevance_enabled=True):
         self.input_guardrail_enabled = input_enabled
         self.output_guardrail_enabled = False
+        self.relevance_guardrail_enabled = relevance_enabled
 
     def get_optional_env(self, key, default):
         values = {
             "SESSION_TIMEOUT_MINUTES": "30",
-            "GUARDRAIL_ENABLED": "true",
+            "GUARDRAIL_ENABLED": str(self.relevance_guardrail_enabled).lower(),
             "GUARDRAIL_STRICTNESS": "medium",
         }
         return values.get(key, default)
@@ -160,3 +161,25 @@ async def test_input_safety_rejection_returns_trigger_reason(monkeypatch):
     response = await routes.query_documents.__wrapped__(make_request())
 
     assert "Violence=4 (>= 4)" in response.guardrail_reason
+
+
+@pytest.mark.asyncio
+async def test_disabled_relevance_guardrail_does_not_reject(monkeypatch):
+    install_query_fakes(
+        monkeypatch,
+        {
+            "guardrail_passed": False,
+            "guardrail_reason": "",
+            "retrieved_chunks": ["Retrieved evidence"],
+            "retrieved_metadata": [],
+            "intent": "factual",
+            "answer": "Answer generated without relevance filtering.",
+        },
+        config=FakeConfig(relevance_enabled=False),
+    )
+
+    response = await routes.query_documents.__wrapped__(make_request())
+
+    assert response.success is True
+    assert response.guardrail_passed is True
+    assert response.guardrail_reason == "Relevance guardrail disabled."

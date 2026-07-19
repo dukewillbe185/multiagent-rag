@@ -243,7 +243,7 @@ RETRIEVAL_TOP_K=5
 LLM_TEMPERATURE=0.7
 
 # 🆕 Guardrail Settings
-GUARDRAIL_ENABLED=true
+GUARDRAIL_ENABLED=true  # false skips the relevance classifier; Content Safety remains separate
 GUARDRAIL_STRICTNESS=medium  # low, medium, or high
 
 # 🆕 Session Management

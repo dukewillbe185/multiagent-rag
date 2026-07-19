@@ -55,7 +55,7 @@ The relevance decision is evidence-based:
 - `irrelevant`: the retrieved evidence does not materially address the question;
 - `unsafe`: retained as a defensive classification, although API requests are already protected by Azure AI Content Safety.
 
-If `GUARDRAIL_ENABLED=false`, retrieval still runs and the relevance result does not block the downstream agents, preserving the current configuration contract.
+If `GUARDRAIL_ENABLED=false`, retrieval still runs, the relevance classifier is omitted from the graph, and downstream agents continue normally, preserving the current configuration contract.
 
 ## Classifier Determinism
 

@@ -247,12 +247,13 @@ async def query_documents(request: QueryRequest):
     Query the RAG system with a question.
 
     This endpoint:
-    1. Validates question through guardrail agent
+    1. Validates input through Azure AI Content Safety
     2. Retrieves session context (previous Q&A if exists)
     3. Retrieves relevant chunks from Azure AI Search
-    4. Identifies user intent
-    5. Generates answer using multi-agent system with conversation memory
-    6. Updates session with current Q&A
+    4. Validates relevance against the retrieved chunks when enabled
+    5. Identifies user intent
+    6. Generates and safety-checks the answer
+    7. Updates session with current Q&A
 
     Args:
         request: Query request with question, session_id, and optional top_k, user_id, metadata
@@ -394,8 +395,12 @@ async def query_documents(request: QueryRequest):
         result = rag_system.graph.invoke(initial_state)
 
         # Check if guardrail passed
-        guardrail_passed = result.get("guardrail_passed", True)
-        guardrail_reason = result.get("guardrail_reason", "")
+        if guardrail_enabled:
+            guardrail_passed = result.get("guardrail_passed", True)
+            guardrail_reason = result.get("guardrail_reason", "")
+        else:
+            guardrail_passed = True
+            guardrail_reason = "Relevance guardrail disabled."
 
         if not guardrail_passed:
             # Guardrail rejected the question

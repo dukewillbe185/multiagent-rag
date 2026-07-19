@@ -219,3 +219,67 @@ def test_retrieval_agent_logs_guardrail_handoff(monkeypatch):
     SupervisorRetrievalAgent(top_k=5).execute(make_state())
 
     assert agent_log.next_agent == "GuardrailAgent"
+
+
+def test_disabled_guardrail_skips_classifier(monkeypatch):
+    calls = []
+
+    def fake_base_init(self, agent_name, **kwargs):
+        self.agent_name = agent_name
+        self.system_prompt = kwargs.get("system_prompt")
+        self.llm = object()
+
+    def retrieve(self, state):
+        calls.append("retrieval")
+        state["retrieved_chunks"] = ["Retrieved evidence"]
+        return state
+
+    def guardrail(self, state):
+        calls.append("guardrail")
+        return state
+
+    def identify(self, state):
+        calls.append("intent")
+        state["intent"] = "factual"
+        return state
+
+    def answer(self, state):
+        calls.append("answer")
+        state["answer"] = "Answer"
+        return state
+
+    monkeypatch.setattr(BaseAgent, "__init__", fake_base_init)
+    monkeypatch.setattr(
+        AzureSearchRetriever,
+        "__init__",
+        lambda self, **kwargs: None,
+    )
+    monkeypatch.setattr(SupervisorRetrievalAgent, "execute", retrieve)
+    monkeypatch.setattr(GuardrailAgent, "execute", guardrail)
+    monkeypatch.setattr(IntentIdentifierAgent, "execute", identify)
+    monkeypatch.setattr(AnswerGeneratorAgent, "execute", answer)
+
+    result = MultiAgentRAG(guardrail_enabled=False).graph.invoke(make_state())
+
+    assert calls == ["retrieval", "intent", "answer"]
+    assert result["answer"] == "Answer"
+
+
+def test_cli_wrapper_respects_disabled_guardrail():
+    rag = MultiAgentRAG.__new__(MultiAgentRAG)
+    rag.guardrail_enabled = False
+    rag.graph = SimpleNamespace(
+        invoke=lambda state: {
+            **state,
+            "answer": "Answer",
+            "intent": "factual",
+            "retrieved_chunks": ["Retrieved evidence"],
+            "retrieved_metadata": [{"source_file": "doc.pdf"}],
+        }
+    )
+
+    response = rag.query("Question")
+
+    assert response["guardrail_passed"] is True
+    assert response["guardrail_reason"] == "Relevance guardrail disabled."
+    assert response["answer"] == "Answer"

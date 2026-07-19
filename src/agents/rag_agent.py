@@ -601,7 +601,6 @@ class MultiAgentRAG:
         workflow = StateGraph(RagState)
 
         # Add agent nodes
-        workflow.add_node("guardrail", self.guardrail_agent.execute)
         workflow.add_node("supervisor_retrieval", self.supervisor_agent.execute)
         workflow.add_node("intent_identifier", self.intent_agent.execute)
         workflow.add_node("answer_generator", self.answer_agent.execute)
@@ -609,18 +608,23 @@ class MultiAgentRAG:
         # Define workflow with conditional routing
         workflow.set_entry_point("supervisor_retrieval")
 
-        # Relevance can only be judged after consulting the indexed corpus.
-        workflow.add_edge("supervisor_retrieval", "guardrail")
+        if self.guardrail_enabled:
+            workflow.add_node("guardrail", self.guardrail_agent.execute)
 
-        # Conditional edge after guardrail
-        workflow.add_conditional_edges(
-            "guardrail",
-            self._should_continue_after_guardrail,
-            {
-                "intent_identifier": "intent_identifier",
-                END: END
-            }
-        )
+            # Relevance can only be judged after consulting the indexed corpus.
+            workflow.add_edge("supervisor_retrieval", "guardrail")
+
+            # Conditional edge after guardrail
+            workflow.add_conditional_edges(
+                "guardrail",
+                self._should_continue_after_guardrail,
+                {
+                    "intent_identifier": "intent_identifier",
+                    END: END
+                }
+            )
+        else:
+            workflow.add_edge("supervisor_retrieval", "intent_identifier")
 
         # Sequential flow after guardrail passes
         workflow.add_edge("intent_identifier", "answer_generator")
@@ -629,7 +633,11 @@ class MultiAgentRAG:
         # Compile graph
         graph = workflow.compile()
 
-        logger.info("LangGraph workflow created: retrieval → guardrail → intent → answer → END")
+        if self.guardrail_enabled:
+            workflow_description = "retrieval → guardrail → intent → answer → END"
+        else:
+            workflow_description = "retrieval → intent → answer → END"
+        logger.info(f"LangGraph workflow created: {workflow_description}")
 
         return graph
 
@@ -685,8 +693,12 @@ class MultiAgentRAG:
             # Run the workflow
             result = self.graph.invoke(initial_state)
 
-            guardrail_passed = result.get("guardrail_passed", True)
-            guardrail_reason = result.get("guardrail_reason", "")
+            if self.guardrail_enabled:
+                guardrail_passed = result.get("guardrail_passed", True)
+                guardrail_reason = result.get("guardrail_reason", "")
+            else:
+                guardrail_passed = True
+                guardrail_reason = "Relevance guardrail disabled."
 
             # A rejected question short-circuits to END, so no answer was generated.
             if not guardrail_passed:
