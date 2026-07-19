@@ -13,6 +13,7 @@ moderation guardrails wrap the whole graph at the API layer (src/api/routes.py).
 Uses LangGraph for orchestrating the agent workflow.
 """
 
+import json
 import logging
 from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, END
@@ -39,6 +40,7 @@ class RagState(TypedDict):
     # Retrieved information
     retrieved_chunks: List[str]
     retrieved_metadata: List[Dict[str, Any]]
+    retrieval_error: str
 
     # Agent outputs
     intent: str
@@ -50,7 +52,7 @@ class RagState(TypedDict):
 
 class GuardrailAgent(BaseAgent):
     """
-    Agent responsible for validating questions before processing.
+    Agent responsible for validating questions before answer generation.
 
     Checks if the question is:
     - Related to the document corpus
@@ -78,6 +80,34 @@ class GuardrailAgent(BaseAgent):
         self.strictness = strictness
         self.log_info(f"Initialized with strictness={strictness}")
 
+    def _parse_decision(self, response: str) -> tuple[str, str]:
+        """Parse a classifier response without allowing invalid schemas to fail open."""
+        try:
+            result = json.loads(response.strip())
+        except (json.JSONDecodeError, AttributeError):
+            self.log_warning(f"Failed to parse JSON response: {response}")
+            response_text = response.lower() if isinstance(response, str) else ""
+            if "relevant" in response_text and "irrelevant" not in response_text:
+                return "relevant", "Passed guardrail check"
+            return "irrelevant", "Failed to parse guardrail response"
+
+        if not isinstance(result, dict):
+            self.log_warning(f"Invalid guardrail response schema: {response}")
+            return "irrelevant", "Invalid guardrail response schema."
+
+        decision = result.get("decision")
+        reason = result.get("reason")
+        if (
+            not isinstance(decision, str)
+            or decision.lower() not in {"relevant", "irrelevant", "unsafe"}
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            self.log_warning(f"Invalid guardrail response schema: {response}")
+            return "irrelevant", "Invalid guardrail response schema."
+
+        return decision.lower(), reason.strip()
+
     def execute(self, state: RagState) -> RagState:
         """
         Validate the question against retrieved evidence and conversation context.
@@ -95,19 +125,20 @@ class GuardrailAgent(BaseAgent):
         previous_answer = state.get("previous_answer", "")
         chunks = state.get("retrieved_chunks", [])
         metadata = state.get("retrieved_metadata", [])
+        retrieval_error = state.get("retrieval_error", "")
 
         with log_agent_execution("GuardrailAgent", session_id, turn, question) as agent_log:
-            try:
-                agent_log.log_action("Evaluating question", {
-                    "turn": turn,
-                    "has_conversation_history": bool(previous_question),
-                    "chunks_available": len(chunks)
-                })
+            agent_log.log_action("Evaluating question", {
+                "turn": turn,
+                "has_conversation_history": bool(previous_question),
+                "chunks_available": len(chunks),
+                "retrieval_failed": bool(retrieval_error),
+            })
 
-                # Build context-aware prompt
-                conversation_context = ""
-                if turn > 1 and previous_question:
-                    conversation_context = f"""
+            # Build context-aware prompt
+            conversation_context = ""
+            if turn > 1 and previous_question:
+                conversation_context = f"""
 IMPORTANT CONTEXT:
 - This is turn #{turn} in an active conversation
 - Previous question was: "{previous_question}"
@@ -115,34 +146,39 @@ IMPORTANT CONTEXT:
 - The user may ask follow-up questions or meta-questions about the conversation
 """
 
-                evidence_parts = []
-                for index, chunk in enumerate(chunks):
-                    chunk_metadata = metadata[index] if index < len(metadata) else {}
-                    source = chunk_metadata.get("source_file", "Unknown")
-                    chunk_index = chunk_metadata.get("chunk_index", "Unknown")
-                    evidence_parts.append(
-                        f"[Retrieved {index + 1}: source={source}, "
-                        f"chunk={chunk_index}]\n{chunk}"
-                    )
-
-                retrieved_evidence = "\n\n".join(evidence_parts)
-                strictness_guidance = {
-                    "low": "Allow plausible topical support from the evidence.",
-                    "medium": "Require material supporting information in the evidence.",
-                    "high": "Require direct evidence for the requested fact or task.",
-                }.get(
-                    self.strictness,
-                    "Require material supporting information in the evidence."
+            evidence_parts = []
+            for index, chunk in enumerate(chunks):
+                chunk_metadata = metadata[index] if index < len(metadata) else {}
+                source = chunk_metadata.get("source_file", "Unknown")
+                chunk_index = chunk_metadata.get("chunk_index", "Unknown")
+                evidence_parts.append(
+                    f"[Retrieved {index + 1}: source={source}, "
+                    f"chunk={chunk_index}]\n{chunk}"
                 )
 
-                if not chunks:
-                    decision = "irrelevant"
-                    reason = (
-                        "No retrieved document evidence was available for "
-                        "relevance assessment."
-                    )
-                else:
-                    prompt = f"""Evaluate whether the retrieved evidence can support this user question.
+            retrieved_evidence = "\n\n".join(evidence_parts)
+            strictness_guidance = {
+                "low": "Allow plausible topical support from the evidence.",
+                "medium": "Require material supporting information in the evidence.",
+                "high": "Require direct evidence for the requested fact or task.",
+            }.get(
+                self.strictness,
+                "Require material supporting information in the evidence."
+            )
+
+            if retrieval_error:
+                decision = "relevant"
+                reason = (
+                    "Relevance check skipped because document retrieval failed."
+                )
+            elif not chunks:
+                decision = "irrelevant"
+                reason = (
+                    "No retrieved document evidence was available for "
+                    "relevance assessment."
+                )
+            else:
+                prompt = f"""Evaluate whether the retrieved evidence can support this user question.
 
 Question: "{question}"
 {conversation_context}
@@ -170,54 +206,39 @@ Respond ONLY with a JSON object in this exact format:
 
 Your response:"""
 
-                    # Get guardrail decision from LLM
+                # Invocation failures fail open; invalid model output does not.
+                try:
                     response = self.invoke_llm(prompt)
+                except Exception as e:
+                    self.log_error(f"[{session_id}] Guardrail invocation failed: {e}")
+                    decision = "relevant"
+                    reason = "Relevance classifier unavailable; check skipped (fail-open)."
+                else:
+                    decision, reason = self._parse_decision(response)
 
-                    # Parse the response
-                    import json
-                    try:
-                        result = json.loads(response.strip())
-                        decision = result.get("decision", "irrelevant").lower()
-                        reason = result.get("reason", "Unable to classify")
-                    except json.JSONDecodeError:
-                        # Fallback parsing if JSON parsing fails
-                        self.log_warning(f"Failed to parse JSON response: {response}")
-                        if "relevant" in response.lower() and "irrelevant" not in response.lower():
-                            decision = "relevant"
-                            reason = "Passed guardrail check"
-                        else:
-                            decision = "irrelevant"
-                            reason = "Failed to parse guardrail response"
+            # Update state
+            passed = decision == "relevant"
+            state["guardrail_passed"] = passed
+            state["guardrail_reason"] = reason
 
-                # Update state
-                passed = (decision == "relevant")
-                state["guardrail_passed"] = passed
-                state["guardrail_reason"] = reason
+            # Log decision
+            agent_log.log_decision(
+                decision="PASSED" if passed else "REJECTED",
+                reason=reason,
+                confidence="high" if turn > 1 and passed else "medium"
+            )
 
-                # Log decision
-                agent_log.log_decision(
-                    decision="PASSED" if passed else "REJECTED",
-                    reason=reason,
-                    confidence="high" if turn > 1 and passed else "medium"
-                )
-
-                # Log completion
-                next_agent = "IntentIdentifierAgent" if passed else "END"
-                agent_log.log_complete(
-                    output_summary=f"Decision: {decision.upper()} - {reason}",
-                    next_agent=next_agent,
-                    metadata={
-                        "guardrail_passed": passed,
-                        "decision_type": decision,
-                        "turn": turn
-                    }
-                )
-
-            except Exception as e:
-                self.log_error(f"[{session_id}] Guardrail evaluation failed: {e}")
-                # Fail open - allow the question if guardrail fails
-                state["guardrail_passed"] = True
-                state["guardrail_reason"] = f"Guardrail error (fail-open): {str(e)}"
+            # Log completion
+            next_agent = "IntentIdentifierAgent" if passed else "END"
+            agent_log.log_complete(
+                output_summary=f"Decision: {decision.upper()} - {reason}",
+                next_agent=next_agent,
+                metadata={
+                    "guardrail_passed": passed,
+                    "decision_type": decision,
+                    "turn": turn
+                }
+            )
 
         return state
 
@@ -229,17 +250,19 @@ class SupervisorRetrievalAgent(BaseAgent):
     Connects to Azure AI Search and retrieves documents based on the query.
     """
 
-    def __init__(self, top_k: int = 5):
+    def __init__(self, top_k: int = 5, guardrail_enabled: bool = True):
         """
         Initialize the supervisor retrieval agent.
 
         Args:
             top_k: Number of chunks to retrieve
+            guardrail_enabled: Whether retrieval hands off to the relevance guardrail
         """
         super().__init__(
             agent_name="Supervisor Retrieval",
             system_prompt="You are a retrieval supervisor responsible for finding relevant information."
         )
+        self.guardrail_enabled = guardrail_enabled
         self.retriever = AzureSearchRetriever(top_k=top_k)
         self.log_info(f"Initialized with top_k={top_k}")
 
@@ -293,10 +316,17 @@ class SupervisorRetrievalAgent(BaseAgent):
                 # Update state
                 state["retrieved_chunks"] = chunks
                 state["retrieved_metadata"] = metadata
+                state["retrieval_error"] = ""
+
+                next_agent = (
+                    "GuardrailAgent"
+                    if self.guardrail_enabled
+                    else "IntentIdentifierAgent"
+                )
 
                 agent_log.log_complete(
                     output_summary=f"Retrieved {len(chunks)} chunks (avg score: {avg_score:.4f})",
-                    next_agent="GuardrailAgent",
+                    next_agent=next_agent,
                     metadata={
                         "chunks_count": len(chunks),
                         "average_score": avg_score
@@ -307,6 +337,7 @@ class SupervisorRetrievalAgent(BaseAgent):
                 self.log_error(f"[{session_id}] Retrieval failed: {e}")
                 state["retrieved_chunks"] = []
                 state["retrieved_metadata"] = []
+                state["retrieval_error"] = str(e)
 
         return state
 
@@ -561,7 +592,10 @@ class MultiAgentRAG:
 
         # Initialize agents
         self.guardrail_agent = GuardrailAgent(strictness=guardrail_strictness)
-        self.supervisor_agent = SupervisorRetrievalAgent(top_k=top_k)
+        self.supervisor_agent = SupervisorRetrievalAgent(
+            top_k=top_k,
+            guardrail_enabled=guardrail_enabled,
+        )
         self.intent_agent = IntentIdentifierAgent()
         self.answer_agent = AnswerGeneratorAgent()
 
@@ -683,6 +717,7 @@ class MultiAgentRAG:
                 previous_answer="",
                 retrieved_chunks=[],
                 retrieved_metadata=[],
+                retrieval_error="",
                 intent="",
                 answer="",
                 conversation_turn=1,

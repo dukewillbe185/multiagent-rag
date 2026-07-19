@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from src.agents import base_agent, rag_agent
 from src.agents.base_agent import BaseAgent
 from src.agents.rag_agent import (
@@ -23,6 +25,7 @@ def make_state(**overrides):
         "previous_answer": "",
         "retrieved_chunks": [],
         "retrieved_metadata": [],
+        "retrieval_error": "",
         "intent": "",
         "answer": "",
         "conversation_turn": 1,
@@ -118,6 +121,137 @@ def test_guardrail_prompt_uses_retrieved_evidence(monkeypatch):
     assert agent_log.next_agent == "IntentIdentifierAgent"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "[]",
+        '{"decision": null, "reason": "Missing decision"}',
+        '{"decision": "relevant", "reason": null}',
+        '{"decision": "unknown", "reason": "Unexpected decision"}',
+    ],
+)
+def test_guardrail_rejects_schema_invalid_json(monkeypatch, payload):
+    class InvalidSchemaLLM:
+        def invoke(self, messages):
+            return SimpleNamespace(content=payload)
+
+    agent_log = SimpleNamespace(
+        log_action=lambda *args, **kwargs: None,
+        log_decision=lambda *args, **kwargs: None,
+        log_complete=lambda **kwargs: None,
+    )
+
+    class LogContext:
+        def __enter__(self):
+            return agent_log
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(
+        BaseAgent,
+        "_initialize_llm",
+        lambda self: InvalidSchemaLLM(),
+    )
+    monkeypatch.setattr(
+        rag_agent,
+        "log_agent_execution",
+        lambda *args, **kwargs: LogContext(),
+    )
+
+    result = GuardrailAgent().execute(
+        make_state(retrieved_chunks=["Retrieved evidence"])
+    )
+
+    assert result["guardrail_passed"] is False
+    assert result["guardrail_reason"] == "Invalid guardrail response schema."
+
+
+def test_guardrail_fails_open_when_retrieval_failed(monkeypatch):
+    llm_called = False
+
+    class RecordingLLM:
+        def invoke(self, messages):
+            nonlocal llm_called
+            llm_called = True
+            return SimpleNamespace(
+                content='{"decision":"irrelevant","reason":"No evidence"}'
+            )
+
+    agent_log = SimpleNamespace(
+        log_action=lambda *args, **kwargs: None,
+        log_decision=lambda *args, **kwargs: None,
+        log_complete=lambda **kwargs: None,
+    )
+
+    class LogContext:
+        def __enter__(self):
+            return agent_log
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(
+        BaseAgent,
+        "_initialize_llm",
+        lambda self: RecordingLLM(),
+    )
+    monkeypatch.setattr(
+        rag_agent,
+        "log_agent_execution",
+        lambda *args, **kwargs: LogContext(),
+    )
+
+    result = GuardrailAgent().execute(
+        make_state(retrieval_error="Azure Search unavailable")
+    )
+
+    assert llm_called is False
+    assert result["guardrail_passed"] is True
+    assert result["guardrail_reason"] == (
+        "Relevance check skipped because document retrieval failed."
+    )
+
+
+def test_guardrail_invocation_failure_remains_fail_open(monkeypatch):
+    class FailingLLM:
+        def invoke(self, messages):
+            raise RuntimeError("model unavailable")
+
+    agent_log = SimpleNamespace(
+        log_action=lambda *args, **kwargs: None,
+        log_decision=lambda *args, **kwargs: None,
+        log_complete=lambda **kwargs: None,
+    )
+
+    class LogContext:
+        def __enter__(self):
+            return agent_log
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(
+        BaseAgent,
+        "_initialize_llm",
+        lambda self: FailingLLM(),
+    )
+    monkeypatch.setattr(
+        rag_agent,
+        "log_agent_execution",
+        lambda *args, **kwargs: LogContext(),
+    )
+
+    result = GuardrailAgent().execute(
+        make_state(retrieved_chunks=["Retrieved evidence"])
+    )
+
+    assert result["guardrail_passed"] is True
+    assert result["guardrail_reason"] == (
+        "Relevance classifier unavailable; check skipped (fail-open)."
+    )
+
+
 def test_workflow_retrieves_before_guardrail_and_stops_on_rejection(
     monkeypatch,
 ):
@@ -174,7 +308,18 @@ def test_workflow_retrieves_before_guardrail_and_stops_on_rejection(
     assert result["guardrail_passed"] is False
 
 
-def test_retrieval_agent_logs_guardrail_handoff(monkeypatch):
+@pytest.mark.parametrize(
+    ("guardrail_enabled", "expected_next_agent"),
+    [
+        (True, "GuardrailAgent"),
+        (False, "IntentIdentifierAgent"),
+    ],
+)
+def test_retrieval_agent_logs_actual_handoff(
+    monkeypatch,
+    guardrail_enabled,
+    expected_next_agent,
+):
     agent_log = SimpleNamespace(
         log_action=lambda *args, **kwargs: None,
         log_complete=lambda **kwargs: setattr(
@@ -216,9 +361,51 @@ def test_retrieval_agent_logs_guardrail_handoff(monkeypatch):
         lambda *args, **kwargs: LogContext(),
     )
 
-    SupervisorRetrievalAgent(top_k=5).execute(make_state())
+    SupervisorRetrievalAgent(
+        top_k=5,
+        guardrail_enabled=guardrail_enabled,
+    ).execute(make_state())
 
-    assert agent_log.next_agent == "GuardrailAgent"
+    assert agent_log.next_agent == expected_next_agent
+
+
+def test_retrieval_agent_records_failure(monkeypatch):
+    agent_log = SimpleNamespace(
+        log_action=lambda *args, **kwargs: None,
+        log_complete=lambda **kwargs: None,
+    )
+
+    class LogContext:
+        def __enter__(self):
+            return agent_log
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(BaseAgent, "_initialize_llm", lambda self: object())
+    monkeypatch.setattr(
+        AzureSearchRetriever,
+        "__init__",
+        lambda self, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        AzureSearchRetriever,
+        "retrieve",
+        lambda self, question: (_ for _ in ()).throw(
+            RuntimeError("Azure Search unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        rag_agent,
+        "log_agent_execution",
+        lambda *args, **kwargs: LogContext(),
+    )
+
+    result = SupervisorRetrievalAgent(top_k=5).execute(make_state())
+
+    assert result["retrieved_chunks"] == []
+    assert result["retrieved_metadata"] == []
+    assert result["retrieval_error"] == "Azure Search unavailable"
 
 
 def test_disabled_guardrail_skips_classifier(monkeypatch):

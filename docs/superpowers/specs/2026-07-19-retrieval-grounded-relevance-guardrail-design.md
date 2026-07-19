@@ -82,9 +82,9 @@ Unexpected API failures continue to use FastAPI's existing HTTP error response r
 
 ## Error Handling
 
-Malformed relevance-classifier output keeps the existing conservative parsing behavior, but its failure reason is returned and logged. LLM invocation failures remain fail-open so a transient classifier outage does not block valid knowledge-base questions.
+Malformed non-JSON relevance-classifier output keeps the existing conservative parsing behavior, but its failure reason is returned and logged. Schema-invalid JSON is rejected rather than allowed to bypass the classifier or reach the API with unsafe field types. LLM invocation failures remain fail-open so a transient classifier outage does not block valid knowledge-base questions.
 
-Azure retrieval failures continue through the existing retrieval error path; this change does not alter retry or search-service behavior.
+Azure retrieval failures are tracked separately from genuine zero-result searches. A retrieval failure skips the relevance decision fail-open and continues through the existing downstream fallback; a successful search with no chunks is classified as irrelevant. This change does not alter retry or search-service behavior.
 
 ## Tests and Acceptance Criteria
 

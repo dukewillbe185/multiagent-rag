@@ -383,6 +383,7 @@ async def query_documents(request: QueryRequest):
             previous_answer=previous_answer,
             retrieved_chunks=[],
             retrieved_metadata=[],
+            retrieval_error="",
             intent="",
             answer="",
             conversation_turn=conversation_turn,
