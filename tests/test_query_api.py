@@ -34,6 +34,7 @@ def install_query_fakes(
     graph_result,
     config=None,
     guardrail=None,
+    completed_calls=None,
 ):
     config = config or FakeConfig()
     guardrail = guardrail or SimpleNamespace()
@@ -65,11 +66,18 @@ def install_query_fakes(
         "log_request_start",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(
-        routes,
-        "log_request_complete",
-        lambda *args, **kwargs: None,
-    )
+    if completed_calls is None:
+        monkeypatch.setattr(
+            routes,
+            "log_request_complete",
+            lambda *args, **kwargs: None,
+        )
+    else:
+        monkeypatch.setattr(
+            routes,
+            "log_request_complete",
+            lambda *args, **kwargs: completed_calls.append(kwargs),
+        )
 
 
 def make_request(question="test question"):
@@ -105,6 +113,7 @@ async def test_relevance_rejection_returns_guardrail_reason(monkeypatch):
 @pytest.mark.asyncio
 async def test_success_returns_guardrail_reason(monkeypatch):
     reason = "The retrieved passage directly answers the TAL claims question."
+    completed_calls = []
     install_query_fakes(
         monkeypatch,
         {
@@ -115,15 +124,20 @@ async def test_success_returns_guardrail_reason(monkeypatch):
             ],
             "retrieved_metadata": [],
             "intent": "factual",
-            "answer": (
-                "TAL paid over $4.2 billion to over 50,128 customers."
-            ),
+            "answer": ("TAL paid over $4.2 billion to over 50,128 customers."),
         },
+        completed_calls=completed_calls,
     )
 
     response = await routes.query_documents.__wrapped__(make_request())
 
     assert response.guardrail_reason == reason
+    assert completed_calls[0]["agents_executed"] == [
+        "SupervisorRetrievalAgent",
+        "GuardrailAgent",
+        "IntentIdentifierAgent",
+        "AnswerGeneratorAgent",
+    ]
 
 
 @pytest.mark.asyncio

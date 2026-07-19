@@ -573,7 +573,7 @@ async def query_documents(request: QueryRequest):
             session_id=session_id,
             duration=processing_time,
             guardrail_passed=True,
-            agents_executed=["GuardrailAgent", "SupervisorRetrievalAgent",
+            agents_executed=["SupervisorRetrievalAgent", "GuardrailAgent",
                            "IntentIdentifierAgent", "AnswerGeneratorAgent"],
             chunks_retrieved=len(retrieved_chunks_info),
             success=True,

@@ -72,7 +72,8 @@ class GuardrailAgent(BaseAgent):
                 "Your job is to determine if a question should be processed by the RAG system. "
                 "Evaluate if the question is appropriate, safe, and likely related to the indexed documents."
             ),
-            temperature=0.0
+            temperature=1.0,
+            seed=0
         )
         self.strictness = strictness
         self.log_info(f"Initialized with strictness={strictness}")
@@ -201,7 +202,7 @@ Your response:"""
                 )
 
                 # Log completion
-                next_agent = "SupervisorRetrievalAgent" if passed else "END"
+                next_agent = "IntentIdentifierAgent" if passed else "END"
                 agent_log.log_complete(
                     output_summary=f"Decision: {decision.upper()} - {reason}",
                     next_agent=next_agent,
@@ -295,7 +296,7 @@ class SupervisorRetrievalAgent(BaseAgent):
 
                 agent_log.log_complete(
                     output_summary=f"Retrieved {len(chunks)} chunks (avg score: {avg_score:.4f})",
-                    next_agent="IntentIdentifierAgent",
+                    next_agent="GuardrailAgent",
                     metadata={
                         "chunks_count": len(chunks),
                         "average_score": avg_score

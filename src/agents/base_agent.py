@@ -28,7 +28,8 @@ class BaseAgent:
         self,
         agent_name: str,
         system_prompt: str = None,
-        temperature: float = None
+        temperature: float = None,
+        seed: int = None
     ):
         """
         Initialize base agent.
@@ -37,10 +38,12 @@ class BaseAgent:
             agent_name: Name of the agent (for logging)
             system_prompt: Optional system prompt for the agent
             temperature: Optional per-agent temperature override
+            seed: Optional best-effort deterministic sampling seed
         """
         self.agent_name = agent_name
         self.system_prompt = system_prompt
         self.temperature = temperature
+        self.seed = seed
         self.llm = self._initialize_llm()
 
         logger.info(f"[{self.agent_name}] Agent initialized")
@@ -63,13 +66,17 @@ class BaseAgent:
         )
 
         try:
-            llm = AzureChatOpenAI(
-                azure_endpoint=config.ai_foundry_gpt4_endpoint,
-                azure_deployment=config.ai_foundry_gpt4_deployment,
-                api_key=config.ai_foundry_gpt4_key,
-                api_version=config.ai_foundry_gpt4_api_version,
-                temperature=temperature
-            )
+            llm_kwargs = {
+                "azure_endpoint": config.ai_foundry_gpt4_endpoint,
+                "azure_deployment": config.ai_foundry_gpt4_deployment,
+                "api_key": config.ai_foundry_gpt4_key,
+                "api_version": config.ai_foundry_gpt4_api_version,
+                "temperature": temperature,
+            }
+            if self.seed is not None:
+                llm_kwargs["model_kwargs"] = {"seed": self.seed}
+
+            llm = AzureChatOpenAI(**llm_kwargs)
 
             logger.info(
                 f"[{self.agent_name}] LLM initialized with deployment: "
