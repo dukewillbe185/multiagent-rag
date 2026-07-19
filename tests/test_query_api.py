@@ -165,6 +165,7 @@ async def test_input_safety_rejection_returns_trigger_reason(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_disabled_relevance_guardrail_does_not_reject(monkeypatch):
+    completed_calls = []
     install_query_fakes(
         monkeypatch,
         {
@@ -176,6 +177,7 @@ async def test_disabled_relevance_guardrail_does_not_reject(monkeypatch):
             "answer": "Answer generated without relevance filtering.",
         },
         config=FakeConfig(relevance_enabled=False),
+        completed_calls=completed_calls,
     )
 
     response = await routes.query_documents.__wrapped__(make_request())
@@ -183,3 +185,8 @@ async def test_disabled_relevance_guardrail_does_not_reject(monkeypatch):
     assert response.success is True
     assert response.guardrail_passed is True
     assert response.guardrail_reason == "Relevance guardrail disabled."
+    assert completed_calls[0]["agents_executed"] == [
+        "SupervisorRetrievalAgent",
+        "IntentIdentifierAgent",
+        "AnswerGeneratorAgent",
+    ]

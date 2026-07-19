@@ -573,13 +573,19 @@ async def query_documents(request: QueryRequest):
         )
 
         # Log request complete for successful processing
+        agents_executed = ["SupervisorRetrievalAgent"]
+        if guardrail_enabled:
+            agents_executed.append("GuardrailAgent")
+        agents_executed.extend([
+            "IntentIdentifierAgent",
+            "AnswerGeneratorAgent",
+        ])
         log_request_complete(
             request_id=request_id,
             session_id=session_id,
             duration=processing_time,
             guardrail_passed=True,
-            agents_executed=["SupervisorRetrievalAgent", "GuardrailAgent",
-                           "IntentIdentifierAgent", "AnswerGeneratorAgent"],
+            agents_executed=agents_executed,
             chunks_retrieved=len(retrieved_chunks_info),
             success=True,
             error=None
