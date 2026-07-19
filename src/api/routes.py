@@ -321,6 +321,9 @@ async def query_documents(request: QueryRequest):
 
         if input_gr and input_gr.detected:
             processing_time = time.time() - start_time
+            input_guardrail_reason = "Input safety guardrail detected"
+            if input_gr.triggered:
+                input_guardrail_reason += f": {', '.join(input_gr.triggered)}"
             logger.warning(
                 f"[{session_id}] INPUT guardrail blocked question: {input_gr.triggered}",
                 extra={"session_id": session_id, "input_guardrail": "detected",
@@ -352,6 +355,7 @@ async def query_documents(request: QueryRequest):
                 sources=[],
                 processing_time_seconds=round(processing_time, 2),
                 guardrail_passed=False,
+                guardrail_reason=input_guardrail_reason,
                 input_guardrail=STATUS_DETECTED,
                 output_guardrail=STATUS_SKIPPED,
                 input_guardrail_details=input_details,
@@ -450,6 +454,7 @@ async def query_documents(request: QueryRequest):
                 sources=[],
                 processing_time_seconds=round(processing_time, 2),
                 guardrail_passed=False,
+                guardrail_reason=guardrail_reason,
                 input_guardrail=input_status,
                 output_guardrail=STATUS_SKIPPED,
                 input_guardrail_details=input_details,
@@ -587,6 +592,9 @@ async def query_documents(request: QueryRequest):
             sources=sources,
             processing_time_seconds=round(processing_time, 2),
             guardrail_passed=True,
+            guardrail_reason=(
+                guardrail_reason or "Relevance guardrail passed."
+            ),
             input_guardrail=input_status,
             output_guardrail=output_status,
             input_guardrail_details=input_details,
