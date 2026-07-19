@@ -27,7 +27,7 @@ This project implements a sophisticated RAG system that:
 2. Chunks text using LangChain's RecursiveCharacterTextSplitter
 3. Generates embeddings using Azure AI Foundry (text-embedding-ada-002)
 4. Indexes documents in Azure AI Search with hybrid search capabilities
-5. Answers questions using a 3-agent workflow powered by LangGraph and GPT-4
+5. Answers questions using a 4-agent workflow powered by LangGraph and GPT-4
 
 ## Architecture
 
@@ -38,10 +38,12 @@ The system uses **LangGraph** to orchestrate a 4-agent workflow with guardrails:
 ```
 User Question
      ↓
-[Guardrail Agent] → Validates question (relevant/irrelevant/unsafe)
-     ↓ (if passed)
+[Azure AI Content Safety] → Blocks unsafe input
+     ↓ (if safe)
 [Supervisor Retrieval Agent]
      ↓ (retrieve relevant chunks)
+[Guardrail Agent] → Validates relevance against retrieved evidence
+     ↓ (if relevant)
 [Intent Identifier Agent]
      ↓ (identify user intent)
 [Answer Generator Agent] → Uses conversation memory
@@ -50,8 +52,8 @@ Final Answer
 ```
 
 **Agent Roles:**
-1. **Guardrail Agent** - Validates questions before processing (filters irrelevant/unsafe queries)
-2. **Supervisor Retrieval Agent** - Retrieves relevant document chunks from Azure AI Search
+1. **Supervisor Retrieval Agent** - Retrieves relevant document chunks from Azure AI Search
+2. **Guardrail Agent** - Validates relevance against retrieved chunks with stable seeded sampling
 3. **Intent Identifier Agent** - Identifies user's question intent (definition, explanation, etc.)
 4. **Answer Generator Agent** - Generates comprehensive answer using retrieved context and conversation history
 
@@ -83,9 +85,11 @@ PDF Document
 ### 🆕 New Production Features
 
 #### Guardrail System
-- **Question Validation** - Filters irrelevant and unsafe questions before processing
+- **Input Safety** - Azure AI Content Safety blocks unsafe input before retrieval
+- **Evidence-Grounded Relevance** - Filters unrelated questions after consulting indexed documents
 - **Configurable Strictness** - Low, medium, or high guardrail sensitivity
-- **Detailed Logging** - All guardrail decisions logged with reasons
+- **Stable Classification** - Relevance checks use the GPT-5-supported default temperature with a fixed best-effort seed
+- **Detailed Diagnostics** - Guardrail decisions and reasons are logged and returned by the API
 - **Rejection Messages** - User-friendly messages for rejected queries
 
 #### Session Management & Conversation Memory
@@ -445,7 +449,10 @@ curl -X POST "http://localhost:8000/api/v1/query" \
   ],
   "sources": ["doc.pdf"],
   "processing_time_seconds": 2.3,
-  "guardrail_passed": true
+  "guardrail_passed": true,
+  "guardrail_reason": "The retrieved evidence directly supports the question.",
+  "input_guardrail": "nothing detected",
+  "output_guardrail": "nothing detected"
 }
 ```
 
@@ -462,7 +469,10 @@ curl -X POST "http://localhost:8000/api/v1/query" \
   "retrieved_chunks": [],
   "sources": [],
   "processing_time_seconds": 0.5,
-  "guardrail_passed": false
+  "guardrail_passed": false,
+  "guardrail_reason": "The retrieved chunks do not address weather.",
+  "input_guardrail": "nothing detected",
+  "output_guardrail": "not evaluated"
 }
 ```
 

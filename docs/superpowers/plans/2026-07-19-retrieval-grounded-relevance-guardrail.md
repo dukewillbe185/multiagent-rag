@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prevent valid knowledge-base questions from being rejected before search by grounding relevance classification in retrieved chunks, making the classifier deterministic, and exposing its reason through the API.
+**Goal:** Prevent valid knowledge-base questions from being rejected before search by grounding relevance classification in retrieved chunks, stabilizing the classifier, and exposing its reason through the API.
 
-**Architecture:** Keep Azure AI Content Safety at the API boundary before the LangGraph workflow. Reorder the graph to retrieve first and then run the relevance guardrail against the retrieved evidence; only relevant requests proceed to intent detection and answer generation. Give `GuardrailAgent` a per-agent temperature override of `0.0` and add `guardrail_reason` to every `QueryResponse` path.
+**Architecture:** Keep Azure AI Content Safety at the API boundary before the LangGraph workflow. Reorder the graph to retrieve first and then run the relevance guardrail against the retrieved evidence; only relevant requests proceed to intent detection and answer generation. Use GPT-5-compatible seeded sampling for `GuardrailAgent` and add `guardrail_reason` to every `QueryResponse` path.
 
 **Tech Stack:** Python 3.12, pytest 7, LangGraph 0.0.x, LangChain `AzureChatOpenAI`, FastAPI, Pydantic 2, Azure AI Search.
 
@@ -18,7 +18,7 @@
 
 ---
 
-### Task 1: Deterministic Guardrail LLM Configuration
+### Task 1: Stable Guardrail LLM Configuration
 
 **Files:**
 - Create: `tests/test_relevance_guardrail.py`
@@ -27,7 +27,7 @@
 
 **Interfaces:**
 - Consumes: `BaseAgent(agent_name: str, system_prompt: str | None)` and application `LLM_TEMPERATURE`.
-- Produces: `BaseAgent(agent_name: str, system_prompt: str | None, temperature: float | None = None)`; `GuardrailAgent` uses `temperature=0.0`.
+- Produces: `BaseAgent(agent_name: str, system_prompt: str | None, temperature: float | None = None, seed: int | None = None)`; `GuardrailAgent` uses GPT-5-compatible `temperature=1.0` and `seed=0`.
 
 - [ ] **Step 1: Write the failing temperature-override test**
 
@@ -38,7 +38,7 @@ from src.agents import base_agent
 from src.agents.rag_agent import GuardrailAgent
 
 
-def test_guardrail_uses_zero_temperature(monkeypatch):
+def test_guardrail_uses_supported_seeded_sampling(monkeypatch):
     captured = {}
 
     def fake_chat_openai(**kwargs):
@@ -60,42 +60,47 @@ def test_guardrail_uses_zero_temperature(monkeypatch):
 
     GuardrailAgent(strictness="medium")
 
-    assert captured["temperature"] == 0.0
+    assert captured["temperature"] == 1.0
+    assert captured["model_kwargs"] == {"seed": 0}
 ```
 
 - [ ] **Step 2: Run the test and verify RED**
 
-Run: `/Users/dukeisyourdaddy/Desktop/multiagent-rag/.venv/bin/python -m pytest tests/test_relevance_guardrail.py::test_guardrail_uses_zero_temperature -q`
+Run: `/Users/dukeisyourdaddy/Desktop/multiagent-rag/.venv/bin/python -m pytest tests/test_relevance_guardrail.py::test_guardrail_uses_supported_seeded_sampling -q`
 
-Expected: FAIL because the current guardrail inherits `llm_temperature=1.0`.
+Expected: FAIL because the current guardrail does not send the fixed seed.
 
 - [ ] **Step 3: Add the minimal per-agent override**
 
 ```python
 class BaseAgent:
-    def __init__(self, agent_name: str, system_prompt: str = None, temperature: float = None):
+    def __init__(self, agent_name: str, system_prompt: str = None, temperature: float = None, seed: int = None):
         self.agent_name = agent_name
         self.system_prompt = system_prompt
         self.temperature = temperature
+        self.seed = seed
         self.llm = self._initialize_llm()
 
     def _initialize_llm(self) -> AzureChatOpenAI:
         config = get_config()
         temperature = config.llm_temperature if self.temperature is None else self.temperature
-        return AzureChatOpenAI(
+        kwargs = dict(
             azure_endpoint=config.ai_foundry_gpt4_endpoint,
             azure_deployment=config.ai_foundry_gpt4_deployment,
             api_key=config.ai_foundry_gpt4_key,
             api_version=config.ai_foundry_gpt4_api_version,
             temperature=temperature,
         )
+        if self.seed is not None:
+            kwargs["model_kwargs"] = {"seed": self.seed}
+        return AzureChatOpenAI(**kwargs)
 ```
 
-Pass `temperature=0.0` from `GuardrailAgent.__init__`; leave all other agents unchanged.
+The initial `temperature=0.0` implementation was rejected by the live `gpt-5-mini` deployment. Pass `temperature=1.0` and `seed=0` from `GuardrailAgent.__init__`; leave all other agents unchanged.
 
 - [ ] **Step 4: Run the focused test and verify GREEN**
 
-Run: `/Users/dukeisyourdaddy/Desktop/multiagent-rag/.venv/bin/python -m pytest tests/test_relevance_guardrail.py::test_guardrail_uses_zero_temperature -q`
+Run: `/Users/dukeisyourdaddy/Desktop/multiagent-rag/.venv/bin/python -m pytest tests/test_relevance_guardrail.py::test_guardrail_uses_supported_seeded_sampling -q`
 
 Expected: `1 passed`.
 
@@ -103,7 +108,7 @@ Expected: `1 passed`.
 
 ```bash
 git add tests/test_relevance_guardrail.py src/agents/base_agent.py src/agents/rag_agent.py
-git commit -m "Make relevance guardrail deterministic"
+git commit -m "Stabilize relevance guardrail sampling"
 ```
 
 ---

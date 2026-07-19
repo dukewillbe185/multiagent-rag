@@ -38,9 +38,9 @@ app = FastAPI(
     ## Architecture
 
     The system uses a 4-agent workflow powered by LangGraph:
-    1. **Guardrail Agent** - Validates that the question is relevant/safe; rejects it
-       early and skips the rest of the workflow if not
-    2. **Supervisor Retrieval Agent** - Retrieves relevant document chunks
+    1. **Supervisor Retrieval Agent** - Retrieves relevant document chunks
+    2. **Guardrail Agent** - Validates relevance against the retrieved evidence
+       with stable seeded sampling and skips downstream generation when unrelated
     3. **Intent Identifier Agent** - Identifies user's question intent
     4. **Answer Generator Agent** - Generates comprehensive answers
 
@@ -48,7 +48,7 @@ app = FastAPI(
 
     Azure AI Content Safety wraps the agent workflow on both sides:
 
-    `question -> input guardrail -> [4-agent workflow] -> answer -> output guardrail -> user`
+    `question -> input guardrail -> retrieval -> relevance guardrail -> answer -> output guardrail -> user`
 
     - **Input guardrail** - Text moderation (Hate / SelfHarm / Sexual / Violence) plus
       Prompt Shields (jailbreak / prompt-injection), run before any LLM work. A hit
@@ -57,7 +57,8 @@ app = FastAPI(
 
     Both statuses are reported on every response via the `input_guardrail` and
     `output_guardrail` fields ("nothing detected" / "detected" / "not evaluated"),
-    with per-category severities in the matching `*_details` field.
+    with per-category severities in the matching `*_details` field. The
+    `guardrail_reason` field explains each safety or relevance decision.
 
     ## Azure Services
 

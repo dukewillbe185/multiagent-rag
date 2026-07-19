@@ -10,7 +10,7 @@ The same classifier inherits the application's general generation temperature (c
 
 ### A. Retrieve first, then classify against retrieved evidence (selected)
 
-Run hybrid retrieval before the relevance classifier and include the retrieved chunks in the classifier prompt. Use a deterministic temperature of `0` for this classifier only. This directly grounds the decision in the same evidence the answer generator will use and preserves the ability to reject unrelated questions.
+Run hybrid retrieval before the relevance classifier and include the retrieved chunks in the classifier prompt. Use stable, model-supported sampling for this classifier only. This directly grounds the decision in the same evidence the answer generator will use and preserves the ability to reject unrelated questions.
 
 Trade-off: every safe question incurs an embedding and search request, including unrelated questions. This is acceptable because relevance cannot be established reliably without consulting the corpus.
 
@@ -59,7 +59,7 @@ If `GUARDRAIL_ENABLED=false`, retrieval still runs and the relevance result does
 
 ## Classifier Determinism
 
-`BaseAgent` will accept an optional per-agent temperature override. `GuardrailAgent` will pass `0.0`; intent identification and answer generation will continue using `LLM_TEMPERATURE` from application configuration.
+`BaseAgent` accepts optional per-agent temperature and seed overrides. The deployed `gpt-5-mini` model rejects `temperature=0.0` and only supports its default value of `1`; `GuardrailAgent` therefore uses `temperature=1.0` with `seed=0`. Azure documents seed as best-effort rather than guaranteed determinism, so retrieved evidence and the constrained classification prompt remain the primary reliability controls. Intent identification and answer generation continue using `LLM_TEMPERATURE` from application configuration.
 
 `GUARDRAIL_STRICTNESS` remains backward compatible and will be included explicitly in the relevance prompt:
 
@@ -74,9 +74,11 @@ If `GUARDRAIL_ENABLED=false`, retrieval still runs and the relevance result does
 - Input safety rejection: reason describes the triggered Content Safety checks.
 - Relevance rejection: reason is the relevance classifier explanation.
 - Successful answer: reason records why the retrieved evidence was accepted.
-- Unexpected failure: reason identifies the processing failure without exposing credentials.
+- CLI wrapper failure: reason identifies the processing failure without exposing credentials.
 
 Existing fields and rejection messages remain unchanged, so clients using the current schema remain compatible apart from receiving one additional response property.
+
+Unexpected API failures continue to use FastAPI's existing HTTP error response rather than `QueryResponse`.
 
 ## Error Handling
 
@@ -93,7 +95,7 @@ The change is accepted when:
 1. The compiled workflow invokes retrieval before relevance classification.
 2. An irrelevant decision stops before intent identification and answer generation.
 3. The relevance prompt contains the TAL supporting passage and the current question.
-4. `GuardrailAgent` initializes its LLM with temperature `0.0`, independently of `LLM_TEMPERATURE`.
+4. `GuardrailAgent` initializes its LLM with the GPT-5-supported temperature `1.0` and best-effort `seed=0`, independently of `LLM_TEMPERATURE`.
 5. `QueryResponse` serializes `guardrail_reason` for successful and rejected responses.
 6. The existing CLI query path still returns `guardrail_passed` and `guardrail_reason`.
 7. The full local test suite passes.
