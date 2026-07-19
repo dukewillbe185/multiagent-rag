@@ -71,7 +71,8 @@ class GuardrailAgent(BaseAgent):
                 "You are a guardrail system that validates user questions. "
                 "Your job is to determine if a question should be processed by the RAG system. "
                 "Evaluate if the question is appropriate, safe, and likely related to the indexed documents."
-            )
+            ),
+            temperature=0.0
         )
         self.strictness = strictness
         self.log_info(f"Initialized with strictness={strictness}")

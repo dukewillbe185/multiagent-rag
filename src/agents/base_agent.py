@@ -24,16 +24,23 @@ class BaseAgent:
     - Error handling
     """
 
-    def __init__(self, agent_name: str, system_prompt: str = None):
+    def __init__(
+        self,
+        agent_name: str,
+        system_prompt: str = None,
+        temperature: float = None
+    ):
         """
         Initialize base agent.
 
         Args:
             agent_name: Name of the agent (for logging)
             system_prompt: Optional system prompt for the agent
+            temperature: Optional per-agent temperature override
         """
         self.agent_name = agent_name
         self.system_prompt = system_prompt
+        self.temperature = temperature
         self.llm = self._initialize_llm()
 
         logger.info(f"[{self.agent_name}] Agent initialized")
@@ -49,6 +56,11 @@ class BaseAgent:
             Uses Azure AI Foundry endpoint, NOT Azure OpenAI Service
         """
         config = get_config()
+        temperature = (
+            config.llm_temperature
+            if self.temperature is None
+            else self.temperature
+        )
 
         try:
             llm = AzureChatOpenAI(
@@ -56,7 +68,7 @@ class BaseAgent:
                 azure_deployment=config.ai_foundry_gpt4_deployment,
                 api_key=config.ai_foundry_gpt4_key,
                 api_version=config.ai_foundry_gpt4_api_version,
-                temperature=config.llm_temperature
+                temperature=temperature
             )
 
             logger.info(
