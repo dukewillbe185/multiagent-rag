@@ -92,6 +92,7 @@ def make_request(question="test question"):
 @pytest.mark.asyncio
 async def test_relevance_rejection_returns_guardrail_reason(monkeypatch):
     reason = "The retrieved chunks do not address weather."
+    completed_calls = []
     install_query_fakes(
         monkeypatch,
         {
@@ -102,6 +103,7 @@ async def test_relevance_rejection_returns_guardrail_reason(monkeypatch):
             "intent": "",
             "answer": "",
         },
+        completed_calls=completed_calls,
     )
 
     response = await routes.query_documents.__wrapped__(
@@ -109,6 +111,10 @@ async def test_relevance_rejection_returns_guardrail_reason(monkeypatch):
     )
 
     assert response.guardrail_reason == reason
+    assert completed_calls[0]["agents_executed"] == [
+        "SupervisorRetrievalAgent",
+        "GuardrailAgent",
+    ]
 
 
 @pytest.mark.asyncio

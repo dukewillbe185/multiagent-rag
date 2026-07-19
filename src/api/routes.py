@@ -441,7 +441,10 @@ async def query_documents(request: QueryRequest):
                 session_id=session_id,
                 duration=processing_time,
                 guardrail_passed=False,
-                agents_executed=["GuardrailAgent"],
+                agents_executed=[
+                    "SupervisorRetrievalAgent",
+                    "GuardrailAgent",
+                ],
                 chunks_retrieved=0,
                 success=True,  # Request succeeded, just rejected by guardrail
                 error=None
