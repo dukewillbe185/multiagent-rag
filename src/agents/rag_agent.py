@@ -86,9 +86,6 @@ class GuardrailAgent(BaseAgent):
             result = json.loads(response.strip())
         except (json.JSONDecodeError, AttributeError):
             self.log_warning(f"Failed to parse JSON response: {response}")
-            response_text = response.lower() if isinstance(response, str) else ""
-            if "relevant" in response_text and "irrelevant" not in response_text:
-                return "relevant", "Passed guardrail check"
             return "irrelevant", "Failed to parse guardrail response"
 
         if not isinstance(result, dict):

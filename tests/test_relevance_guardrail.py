@@ -167,6 +167,23 @@ def test_guardrail_rejects_schema_invalid_json(monkeypatch, payload):
     assert result["guardrail_reason"] == "Invalid guardrail response schema."
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not relevant",
+        "The question is not relevant to the documents",
+    ],
+)
+def test_guardrail_rejects_non_json_negative_phrases(monkeypatch, payload):
+    agent = GuardrailAgent.__new__(GuardrailAgent)
+    agent.agent_name = "Guardrail"
+
+    decision, reason = agent._parse_decision(payload)
+
+    assert decision == "irrelevant"
+    assert reason == "Failed to parse guardrail response"
+
+
 def test_guardrail_fails_open_when_retrieval_failed(monkeypatch):
     llm_called = False
 

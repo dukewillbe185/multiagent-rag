@@ -98,8 +98,8 @@ async def test_relevance_rejection_returns_guardrail_reason(monkeypatch):
         {
             "guardrail_passed": False,
             "guardrail_reason": reason,
-            "retrieved_chunks": [],
-            "retrieved_metadata": [],
+            "retrieved_chunks": ["Unrelated retrieved evidence"],
+            "retrieved_metadata": [{"source_file": "doc.pdf"}],
             "intent": "",
             "answer": "",
         },
@@ -115,6 +115,7 @@ async def test_relevance_rejection_returns_guardrail_reason(monkeypatch):
         "SupervisorRetrievalAgent",
         "GuardrailAgent",
     ]
+    assert completed_calls[0]["chunks_retrieved"] == 1
 
 
 @pytest.mark.asyncio

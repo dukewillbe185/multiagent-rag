@@ -406,6 +406,7 @@ async def query_documents(request: QueryRequest):
         if not guardrail_passed:
             # Guardrail rejected the question
             processing_time = time.time() - start_time
+            retrieved_count = len(result.get("retrieved_chunks", []))
 
             rejection_messages = {
                 "irrelevant": "Your question doesn't appear to be related to the indexed documents. Please ask questions relevant to the available content.",
@@ -446,7 +447,7 @@ async def query_documents(request: QueryRequest):
                     "SupervisorRetrievalAgent",
                     "GuardrailAgent",
                 ],
-                chunks_retrieved=0,
+                chunks_retrieved=retrieved_count,
                 success=True,  # Request succeeded, just rejected by guardrail
                 error=None
             )
