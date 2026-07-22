@@ -247,12 +247,13 @@ async def query_documents(request: QueryRequest):
     Query the RAG system with a question.
 
     This endpoint:
-    1. Validates question through guardrail agent
+    1. Validates input through Azure AI Content Safety
     2. Retrieves session context (previous Q&A if exists)
     3. Retrieves relevant chunks from Azure AI Search
-    4. Identifies user intent
-    5. Generates answer using multi-agent system with conversation memory
-    6. Updates session with current Q&A
+    4. Validates relevance against the retrieved chunks when enabled
+    5. Identifies user intent
+    6. Generates and safety-checks the answer
+    7. Updates session with current Q&A
 
     Args:
         request: Query request with question, session_id, and optional top_k, user_id, metadata
@@ -321,6 +322,9 @@ async def query_documents(request: QueryRequest):
 
         if input_gr and input_gr.detected:
             processing_time = time.time() - start_time
+            input_guardrail_reason = "Input safety guardrail detected"
+            if input_gr.triggered:
+                input_guardrail_reason += f": {', '.join(input_gr.triggered)}"
             logger.warning(
                 f"[{session_id}] INPUT guardrail blocked question: {input_gr.triggered}",
                 extra={"session_id": session_id, "input_guardrail": "detected",
@@ -352,6 +356,7 @@ async def query_documents(request: QueryRequest):
                 sources=[],
                 processing_time_seconds=round(processing_time, 2),
                 guardrail_passed=False,
+                guardrail_reason=input_guardrail_reason,
                 input_guardrail=STATUS_DETECTED,
                 output_guardrail=STATUS_SKIPPED,
                 input_guardrail_details=input_details,
@@ -378,6 +383,7 @@ async def query_documents(request: QueryRequest):
             previous_answer=previous_answer,
             retrieved_chunks=[],
             retrieved_metadata=[],
+            retrieval_error="",
             intent="",
             answer="",
             conversation_turn=conversation_turn,
@@ -390,12 +396,17 @@ async def query_documents(request: QueryRequest):
         result = rag_system.graph.invoke(initial_state)
 
         # Check if guardrail passed
-        guardrail_passed = result.get("guardrail_passed", True)
-        guardrail_reason = result.get("guardrail_reason", "")
+        if guardrail_enabled:
+            guardrail_passed = result.get("guardrail_passed", True)
+            guardrail_reason = result.get("guardrail_reason", "")
+        else:
+            guardrail_passed = True
+            guardrail_reason = "Relevance guardrail disabled."
 
         if not guardrail_passed:
             # Guardrail rejected the question
             processing_time = time.time() - start_time
+            retrieved_count = len(result.get("retrieved_chunks", []))
 
             rejection_messages = {
                 "irrelevant": "Your question doesn't appear to be related to the indexed documents. Please ask questions relevant to the available content.",
@@ -432,8 +443,11 @@ async def query_documents(request: QueryRequest):
                 session_id=session_id,
                 duration=processing_time,
                 guardrail_passed=False,
-                agents_executed=["GuardrailAgent"],
-                chunks_retrieved=0,
+                agents_executed=[
+                    "SupervisorRetrievalAgent",
+                    "GuardrailAgent",
+                ],
+                chunks_retrieved=retrieved_count,
                 success=True,  # Request succeeded, just rejected by guardrail
                 error=None
             )
@@ -450,6 +464,7 @@ async def query_documents(request: QueryRequest):
                 sources=[],
                 processing_time_seconds=round(processing_time, 2),
                 guardrail_passed=False,
+                guardrail_reason=guardrail_reason,
                 input_guardrail=input_status,
                 output_guardrail=STATUS_SKIPPED,
                 input_guardrail_details=input_details,
@@ -563,13 +578,19 @@ async def query_documents(request: QueryRequest):
         )
 
         # Log request complete for successful processing
+        agents_executed = ["SupervisorRetrievalAgent"]
+        if guardrail_enabled:
+            agents_executed.append("GuardrailAgent")
+        agents_executed.extend([
+            "IntentIdentifierAgent",
+            "AnswerGeneratorAgent",
+        ])
         log_request_complete(
             request_id=request_id,
             session_id=session_id,
             duration=processing_time,
             guardrail_passed=True,
-            agents_executed=["GuardrailAgent", "SupervisorRetrievalAgent",
-                           "IntentIdentifierAgent", "AnswerGeneratorAgent"],
+            agents_executed=agents_executed,
             chunks_retrieved=len(retrieved_chunks_info),
             success=True,
             error=None
@@ -587,6 +608,9 @@ async def query_documents(request: QueryRequest):
             sources=sources,
             processing_time_seconds=round(processing_time, 2),
             guardrail_passed=True,
+            guardrail_reason=(
+                guardrail_reason or "Relevance guardrail passed."
+            ),
             input_guardrail=input_status,
             output_guardrail=output_status,
             input_guardrail_details=input_details,

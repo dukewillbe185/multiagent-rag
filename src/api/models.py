@@ -85,6 +85,10 @@ class QueryResponse(BaseModel):
     sources: List[str] = Field(..., description="List of source files")
     processing_time_seconds: float = Field(..., description="Query processing time")
     guardrail_passed: bool = Field(..., description="Whether question passed the relevance guardrail check")
+    guardrail_reason: str = Field(
+        ...,
+        description="Why the safety or relevance guardrail accepted or rejected the request"
+    )
     input_guardrail: str = Field(
         "not evaluated",
         description="Input guardrail (Azure AI Content Safety) result: 'nothing detected', 'detected', or 'not evaluated'"
@@ -124,7 +128,8 @@ class QueryResponse(BaseModel):
                 ],
                 "sources": ["document.pdf"],
                 "processing_time_seconds": 2.3,
-                "guardrail_passed": True
+                "guardrail_passed": True,
+                "guardrail_reason": "Retrieved evidence directly supports the question."
             }
         }
 
