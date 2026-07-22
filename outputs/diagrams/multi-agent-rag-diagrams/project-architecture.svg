@@ -1,0 +1,200 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1700" viewBox="0 0 2400 1700">
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #172033; }
+      .title { font-size: 54px; font-weight: 700; }
+      .subtitle { font-size: 25px; fill: #65708a; }
+      .group { fill: #f7f9fc; stroke: #cbd5e1; stroke-width: 2; rx: 24; }
+      .group-title { font-size: 28px; font-weight: 700; fill: #334155; }
+      .node { stroke-width: 2.5; rx: 18; }
+      .entry { fill: #eaf3ff; stroke: #4d8fd8; }
+      .pipeline { fill: #eef7f2; stroke: #53a574; }
+      .agent { fill: #f3eeff; stroke: #8b6bd6; }
+      .support { fill: #fff4e8; stroke: #e99a45; }
+      .external { fill: #f1f4f8; stroke: #7b8798; }
+      .node-title { font-size: 26px; font-weight: 700; text-anchor: middle; }
+      .node-sub { font-size: 21px; fill: #556078; text-anchor: middle; }
+      .edge { fill: none; stroke: #64748b; stroke-width: 3; marker-end: url(#arrow); }
+      .edge-dashed { fill: none; stroke: #8a94a6; stroke-width: 2.5; stroke-dasharray: 11 9; marker-end: url(#arrow); }
+      .edge-label { font-size: 20px; fill: #556078; text-anchor: middle; }
+      .legend { font-size: 21px; fill: #556078; }
+    </style>
+  </defs>
+
+  <rect width="2400" height="1700" fill="#ffffff"/>
+  <text class="title" x="100" y="85">Multi-Agent RAG 项目结构</text>
+  <text class="subtitle" x="100" y="130">入口、核心模块、横切能力与 Azure 服务之间的真实依赖关系</text>
+
+  <!-- Group containers -->
+  <rect class="group" x="70" y="180" width="2260" height="260"/>
+  <text class="group-title" x="105" y="225">入口与接口层</text>
+  <rect class="group" x="70" y="480" width="1460" height="650"/>
+  <text class="group-title" x="105" y="525">核心业务层</text>
+  <rect class="group" x="1570" y="480" width="760" height="650"/>
+  <text class="group-title" x="1605" y="525">多智能体层</text>
+  <rect class="group" x="70" y="1170" width="1460" height="360"/>
+  <text class="group-title" x="105" y="1215">横切支撑层</text>
+  <rect class="group" x="1570" y="1170" width="760" height="430"/>
+  <text class="group-title" x="1605" y="1215">外部 Azure 服务</text>
+
+  <!-- Connectors first -->
+  <path class="edge" d="M310 330 H445"/>
+  <path class="edge" d="M775 330 H900"/>
+  <path class="edge" d="M1230 330 H1350"/>
+  <path class="edge" d="M1900 330 H2020"/>
+
+  <path class="edge" d="M1065 400 V565 H265 V635"/>
+  <path class="edge" d="M1065 400 V565 H565 V635"/>
+  <path class="edge" d="M1065 400 V565 H865 V635"/>
+  <path class="edge" d="M1065 400 V565 H1165 V635"/>
+  <path class="edge" d="M1065 400 V1000 H1800 V930"/>
+  <path class="edge" d="M2180 400 V610 H2060"/>
+  <path class="edge" d="M2180 400 V1000 H865 V930"/>
+
+  <path class="edge" d="M415 705 H445"/>
+  <path class="edge" d="M715 705 H745"/>
+  <path class="edge" d="M1015 705 H1045"/>
+  <path class="edge" d="M865 790 V860"/>
+  <path class="edge" d="M1045 930 H1015"/>
+
+  <path class="edge" d="M1800 625 V690"/>
+  <path class="edge" d="M1800 770 V820"/>
+  <path class="edge" d="M1800 900 V950"/>
+  <path class="edge" d="M2060 755 H2180 V930 H2060"/>
+  <path class="edge" d="M1695 755 H1515 V930 H1045"/>
+
+  <path class="edge-dashed" d="M265 1300 V1110 H265 V785"/>
+  <path class="edge-dashed" d="M565 1300 V1110 H565 V785"/>
+  <path class="edge-dashed" d="M865 1300 V1080"/>
+  <path class="edge-dashed" d="M1165 1300 V1080 H1800 V1020"/>
+  <path class="edge" d="M1355 1375 H1595"/>
+
+  <path class="edge" d="M265 785 V1460 H1690"/>
+  <path class="edge" d="M865 785 V1515 H1690"/>
+  <path class="edge" d="M1295 705 H1740 V1330"/>
+  <path class="edge" d="M1015 930 H1820 V1460"/>
+  <path class="edge" d="M2060 980 H2205 V1395"/>
+
+  <!-- Entry nodes -->
+  <rect class="node entry" x="110" y="270" width="200" height="120"/>
+  <text class="node-title" x="210" y="320">API 客户端</text>
+  <text class="node-sub" x="210" y="357">HTTP / JSON / PDF</text>
+
+  <rect class="node entry" x="445" y="270" width="330" height="120"/>
+  <text class="node-title" x="610" y="315">src/api/main.py</text>
+  <text class="node-sub" x="610" y="350">FastAPI 生命周期、CORS</text>
+  <text class="node-sub" x="610" y="378">全局异常处理</text>
+
+  <rect class="node entry" x="900" y="270" width="330" height="120"/>
+  <text class="node-title" x="1065" y="315">src/api/routes.py</text>
+  <text class="node-sub" x="1065" y="350">HTTP 路由</text>
+  <text class="node-sub" x="1065" y="378">业务流程编排</text>
+
+  <rect class="node entry" x="1350" y="270" width="300" height="120"/>
+  <text class="node-title" x="1500" y="315">src/api/models.py</text>
+  <text class="node-sub" x="1500" y="352">Pydantic I/O Schema</text>
+
+  <rect class="node entry" x="1700" y="270" width="200" height="120"/>
+  <text class="node-title" x="1800" y="320">命令行用户</text>
+  <text class="node-sub" x="1800" y="357">CLI 参数</text>
+
+  <rect class="node entry" x="2020" y="270" width="280" height="120"/>
+  <text class="node-title" x="2160" y="315">main.py</text>
+  <text class="node-sub" x="2160" y="350">process / retrieve</text>
+  <text class="node-sub" x="2160" y="378">query / index</text>
+
+  <!-- Core nodes -->
+  <rect class="node pipeline" x="115" y="635" width="300" height="150"/>
+  <text class="node-title" x="265" y="680">DocumentExtractor</text>
+  <text class="node-sub" x="265" y="718">PDF / OCR 文本提取</text>
+  <text class="node-sub" x="265" y="750">document_extractor.py</text>
+
+  <rect class="node pipeline" x="445" y="635" width="270" height="150"/>
+  <text class="node-title" x="580" y="680">TextChunker</text>
+  <text class="node-sub" x="580" y="718">递归切块 + 重叠</text>
+  <text class="node-sub" x="580" y="750">text_chunker.py</text>
+
+  <rect class="node pipeline" x="745" y="635" width="270" height="150"/>
+  <text class="node-title" x="880" y="680">Embedder</text>
+  <text class="node-sub" x="880" y="718">1536 维向量</text>
+  <text class="node-sub" x="880" y="750">embedder.py</text>
+
+  <rect class="node pipeline" x="1045" y="635" width="250" height="150"/>
+  <text class="node-title" x="1170" y="680">Indexer</text>
+  <text class="node-sub" x="1170" y="718">索引创建与批量上传</text>
+  <text class="node-sub" x="1170" y="750">indexer.py</text>
+
+  <rect class="node pipeline" x="665" y="860" width="350" height="140"/>
+  <text class="node-title" x="840" y="905">AzureSearchRetriever</text>
+  <text class="node-sub" x="840" y="943">向量 + BM25 混合检索</text>
+  <text class="node-sub" x="840" y="975">retriever.py</text>
+
+  <!-- Agent nodes -->
+  <rect class="node agent" x="1695" y="560" width="365" height="130"/>
+  <text class="node-title" x="1878" y="605">MultiAgentRAG</text>
+  <text class="node-sub" x="1878" y="643">LangGraph 状态与路由</text>
+  <text class="node-sub" x="1878" y="671">rag_agent.py</text>
+
+  <rect class="node agent" x="1640" y="690" width="300" height="130"/>
+  <text class="node-title" x="1790" y="735">Guardrail Agent</text>
+  <text class="node-sub" x="1790" y="773">相关性 / 安全判断</text>
+
+  <rect class="node agent" x="1990" y="690" width="290" height="130"/>
+  <text class="node-title" x="2135" y="735">Retrieval Agent</text>
+  <text class="node-sub" x="2135" y="773">检索相关文档块</text>
+
+  <rect class="node agent" x="1640" y="820" width="300" height="130"/>
+  <text class="node-title" x="1790" y="865">Intent Agent</text>
+  <text class="node-sub" x="1790" y="903">七类意图识别</text>
+
+  <rect class="node agent" x="1990" y="820" width="290" height="130"/>
+  <text class="node-title" x="2135" y="865">Answer Agent</text>
+  <text class="node-sub" x="2135" y="903">基于上下文生成答案</text>
+
+  <rect class="node agent" x="1695" y="950" width="365" height="130"/>
+  <text class="node-title" x="1878" y="995">BaseAgent</text>
+  <text class="node-sub" x="1878" y="1033">统一 Chat LLM 调用</text>
+
+  <!-- Support -->
+  <rect class="node support" x="115" y="1300" width="300" height="150"/>
+  <text class="node-title" x="265" y="1345">AzureConfig</text>
+  <text class="node-sub" x="265" y="1383">.env 加载、校验</text>
+  <text class="node-sub" x="265" y="1415">配置单例</text>
+
+  <rect class="node support" x="445" y="1300" width="300" height="150"/>
+  <text class="node-title" x="595" y="1345">Content Safety</text>
+  <text class="node-sub" x="595" y="1383">输入 / 输出审核</text>
+  <text class="node-sub" x="595" y="1415">Prompt Shield</text>
+
+  <rect class="node support" x="775" y="1300" width="300" height="150"/>
+  <text class="node-title" x="925" y="1345">Session Memory</text>
+  <text class="node-sub" x="925" y="1383">仅保存上一轮 Q/A</text>
+  <text class="node-sub" x="925" y="1415">超时清理</text>
+
+  <rect class="node support" x="1105" y="1300" width="300" height="150"/>
+  <text class="node-title" x="1255" y="1345">Monitoring</text>
+  <text class="node-sub" x="1255" y="1383">日志、Trace、指标</text>
+  <text class="node-sub" x="1255" y="1415">Agent 执行记录</text>
+
+  <!-- External -->
+  <rect class="node external" x="1620" y="1260" width="280" height="130"/>
+  <text class="node-title" x="1760" y="1305">Document Intelligence</text>
+  <text class="node-sub" x="1760" y="1343">prebuilt-layout</text>
+
+  <rect class="node external" x="1940" y="1260" width="330" height="130"/>
+  <text class="node-title" x="2105" y="1305">Chat Deployment</text>
+  <text class="node-sub" x="2105" y="1343">Guardrail / Intent / Answer</text>
+
+  <rect class="node external" x="1620" y="1420" width="280" height="130"/>
+  <text class="node-title" x="1760" y="1465">Embedding Deployment</text>
+  <text class="node-sub" x="1760" y="1503">文档与查询向量</text>
+
+  <rect class="node external" x="1940" y="1420" width="330" height="130"/>
+  <text class="node-title" x="2105" y="1465">Azure AI Search</text>
+  <text class="node-sub" x="2105" y="1503">HNSW Vector + BM25</text>
+
+  <text class="legend" x="100" y="1638">实线：运行时数据/调用流　　虚线：配置与横切依赖</text>
+</svg>
