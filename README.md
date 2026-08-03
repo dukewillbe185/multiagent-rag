@@ -6,6 +6,7 @@ A production-ready Multi-Agent RAG (Retrieval-Augmented Generation) system built
 
 - [Overview](#overview)
 - [Architecture](#architecture)
+- [MCP & A2A Protocol Integration](#mcp--a2a-protocol-integration)
 - [Features](#features)
 - [Technology Stack](#technology-stack)
 - [Prerequisites](#prerequisites)
@@ -27,7 +28,8 @@ This project implements a sophisticated RAG system that:
 2. Chunks text using LangChain's RecursiveCharacterTextSplitter
 3. Generates embeddings using Azure AI Foundry (text-embedding-ada-002)
 4. Indexes documents in Azure AI Search with hybrid search capabilities
-5. Answers questions using a 3-agent workflow powered by LangGraph and GPT-4
+5. Answers questions using a 4-agent workflow powered by LangGraph and GPT-4
+6. Also ingests XLSX/CSV spreadsheets through a standalone Excel Narrator Agent, reached over the [A2A protocol](#mcp--a2a-protocol-integration), which narrates each sheet into natural-language text before it enters the same chunk → embed → index pipeline
 
 ## Architecture
 
@@ -68,6 +70,131 @@ PDF Document
      ↓
 [Azure AI Search] → Index with Hybrid Search (Vector + Keyword)
 ```
+
+## MCP & A2A Protocol Integration
+
+This project layers two agent-interoperability protocols on top of the existing LangGraph workflow, to teach three distinct, complementary patterns for connecting agents to the world.
+
+### Three-Layer Architecture
+
+| Layer | Direction | Role in this project |
+|-------|-----------|-----------------------|
+| **LangGraph** | in-process | Orchestrates the existing 4-agent query workflow (guardrail → retrieval → intent → answer) inside a single Python process. |
+| **MCP** (Model Context Protocol) | agent ↔ tools/resources ("vertical") | This RAG system is exposed **as an MCP server**. Any MCP client (Claude Desktop, the MCP Inspector, a custom client) can call it with zero custom integration code. |
+| **A2A** (Agent2Agent) | agent ↔ agent, across processes ("horizontal") | This RAG app is an **A2A client** of a standalone Excel Narrator Agent running in its own process. |
+
+The symmetry is the teaching point: **MCP shows others using us. A2A shows us using others.**
+
+### A2A Ingestion Path
+
+XLSX/CSV files are not parsed in-process. They are handed to a separate agent over HTTP/JSON-RPC and narrated into text before entering the normal pipeline:
+
+```
+main.py process data/courses.xlsx
+        │
+        ▼
+A2AExcelClient (src/data_pipeline/a2a_excel_client.py)
+        │
+        │ 1. Agent discovery: GET /.well-known/agent-card.json
+        ▼
+Excel Narrator Agent -- standalone process, services/excel_agent, :9999
+        │
+        │ 2. Raw part upload: spreadsheet bytes + media_type + filename
+        │    (a2a.helpers.new_raw_message)
+        ▼
+        │ 3. Streamed TASK_STATE_WORKING updates, one per step:
+        │      "Reading courses.xlsx..."
+        │      "Narrating sheet 1/2: 'Enrollments'..."
+        │      "Narrating sheet 2/2: 'Equipment'..."
+        ▼
+        │ 4. Artifact: narrated text plus structured sheet metadata
+        │    (text part + data part in one artifact) + TASK_STATE_COMPLETED
+        ▼
+A2AExcelClient returns a DocumentExtractor-shaped dict
+        │
+        ▼
+TextChunker → Embedder → AzureSearchIndexer   (unchanged pipeline)
+```
+
+Zero code coupling: the Excel Narrator Agent never imports `config` or `src`, and the main app never imports `services.excel_agent` -- the two processes share only `.env` conventions and talk exclusively over HTTP/JSON-RPC.
+
+### Running the Demos
+
+#### Demo 1: A2A (Excel Narrator Agent)
+
+Two terminals, both from the project root:
+
+```bash
+# Terminal 1: start the standalone Excel Narrator Agent
+.venv/bin/python -m services.excel_agent
+```
+
+Expected output:
+```
+Starting Excel Narrator Agent on http://127.0.0.1:9999
+Agent card: http://127.0.0.1:9999/.well-known/agent-card.json
+main app: python main.py process data/courses.xlsx
+```
+
+```bash
+# Terminal 2: ingest the sample spreadsheet, then ask a question that can
+# only be answered from it
+python main.py process data/courses.xlsx
+python main.py query "Which course has the highest enrollment?"
+```
+
+Expected answer:
+```
+Advanced Robotics has the highest enrollment — 58 students
+sources: courses.xlsx, doc.pdf
+```
+
+#### Demo 2: MCP (Multi-Agent RAG Server)
+
+```bash
+# Run the server directly (streamable-http transport, default)
+python -m src.mcp_server
+# MCP server: http://127.0.0.1:8100/mcp
+
+# ...or stdio transport, for clients like Claude Desktop
+python -m src.mcp_server --transport stdio
+
+# ...or explore it interactively with the MCP Inspector (no server process needed)
+.venv/bin/mcp dev src/mcp_server/server.py
+```
+
+To use it from Claude Desktop, add to `claude_desktop_config.json` (replace the `command`/`PYTHONPATH` paths below with this project's absolute path on your machine):
+
+```json
+{
+  "mcpServers": {
+    "multiagent-rag": {
+      "command": "/Users/dukeisyourdaddy/Desktop/multiagent-rag/.venv/bin/python",
+      "args": ["-m", "src.mcp_server", "--transport", "stdio"],
+      "env": {
+        "PYTHONPATH": "/Users/dukeisyourdaddy/Desktop/multiagent-rag"
+      }
+    }
+  }
+}
+```
+
+### Ports
+
+| Service | Port | Configured via |
+|---------|------|----------------|
+| FastAPI REST API | `8010` in this deployment (the generic `uvicorn` command under [FastAPI Server](#fastapi-server) defaults to `8000`) | `--port` flag to `uvicorn` |
+| MCP server | `8100` | `MCP_SERVER_HOST` / `MCP_SERVER_PORT` env vars, or `--host` / `--port` CLI flags |
+| A2A Excel Narrator Agent | `9999` | `EXCEL_AGENT_HOST` / `EXCEL_AGENT_PORT` env vars, or `--host` / `--port` CLI flags; the client reads `A2A_EXCEL_AGENT_URL` |
+
+### MCP Primitives
+
+| Primitive | Name | Wraps |
+|-----------|------|-------|
+| Tool | `search_documents(query, top_k=5)` | Raw hybrid retrieval (`AzureSearchRetriever`) -- no LLM calls. |
+| Tool | `ask_rag(question)` | The full 4-agent LangGraph pipeline (`MultiAgentRAG.query`) -- spends LLM calls. |
+| Resource | `rag://index/status` | `AzureSearchIndexer.get_index_statistics()` -- read-only index state. |
+| Prompt | `cited_answer` | Reusable template instructing retrieval-before-answer plus per-claim citation. |
 
 ## Features
 
@@ -120,6 +247,11 @@ PDF Document
 - **CLI Tools** - Command-line interface for all operations
 - **Security** - Environment-based configuration, no hardcoded secrets
 - **Background Tasks** - Automatic session cleanup every 5 minutes
+
+### MCP & A2A Integration
+- **MCP Server** - The RAG pipeline is exposed as a Model Context Protocol server (two tools, one resource, one prompt), usable from Claude Desktop, the MCP Inspector, or any MCP client with zero custom integration code
+- **A2A Client** - XLSX/CSV ingestion delegates to a standalone Excel Narrator Agent over the Agent2Agent protocol, with zero code coupling between the two processes
+- **Streamed Progress** - A2A task updates stream per-sheet narration progress live during ingestion, from agent discovery through the completed artifact
 
 ## Technology Stack
 
@@ -279,10 +411,16 @@ The `main.py` script provides a command-line interface for all operations.
 ```bash
 # Process doc.pdf through the full pipeline
 python main.py process doc.pdf
+
+# Process an XLSX/CSV spreadsheet instead. This routes through the
+# standalone Excel Narrator Agent, so start that agent first in another
+# terminal:
+#   .venv/bin/python -m services.excel_agent
+python main.py process data/courses.xlsx
 ```
 
 This will:
-1. Extract text from PDF
+1. Extract text from PDF (or, for `.xlsx`/`.csv` files, narrate the spreadsheet via the [A2A Excel Narrator Agent](#mcp--a2a-protocol-integration))
 2. Chunk the text
 3. Generate embeddings
 4. Create index (if needed)
@@ -495,6 +633,7 @@ multiagent-rag/
 │   ├── data_pipeline/
 │   │   ├── __init__.py
 │   │   ├── document_extractor.py    # PDF text extraction
+│   │   ├── a2a_excel_client.py      # XLSX/CSV extraction via the A2A Excel Narrator Agent
 │   │   ├── text_chunker.py          # Text chunking
 │   │   ├── embedder.py              # Embedding generation
 │   │   └── indexer.py               # Azure AI Search indexing
@@ -508,11 +647,28 @@ multiagent-rag/
 │   ├── monitoring/
 │   │   ├── __init__.py
 │   │   └── logger.py                # Azure Application Insights
-│   └── api/
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── main.py                  # FastAPI application
+│   │   ├── models.py                # Pydantic models
+│   │   └── routes.py                # API endpoints
+│   └── mcp_server/
 │       ├── __init__.py
-│       ├── main.py                  # FastAPI application
-│       ├── models.py                # Pydantic models
-│       └── routes.py                # API endpoints
+│       ├── __main__.py              # `python -m src.mcp_server` entry point
+│       └── server.py                # FastMCP server: tools, resource, prompt
+├── services/
+│   ├── __init__.py
+│   └── excel_agent/
+│       ├── __init__.py
+│       ├── __main__.py              # `python -m services.excel_agent` entry point
+│       ├── server.py                # A2A server: AgentCard, executor, task streaming
+│       └── narrator.py              # Spreadsheet -> narrative text (zero a2a-sdk imports)
+├── scripts/
+│   └── make_sample_xlsx.py          # Generates data/courses.xlsx for the A2A demo
+├── data/
+│   └── courses.xlsx                 # Sample spreadsheet used by the A2A demo
+├── docs/
+│   └── mcp-a2a-teaching-guide.md    # Classroom walkthrough for both demos (Chinese)
 ├── doc.pdf                          # Test document
 ├── langgraph_test.py               # Multi-agent blueprint
 ├── main.py                         # CLI orchestration script
