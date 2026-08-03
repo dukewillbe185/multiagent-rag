@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from src.data_pipeline.document_extractor import DocumentExtractor
+from src.data_pipeline.a2a_excel_client import A2AExcelClient
 from src.data_pipeline.text_chunker import TextChunker
 from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
@@ -30,32 +31,44 @@ def setup_cli_logging():
     return logging.getLogger(__name__)
 
 
-def process_document(pdf_path: str, logger):
+def process_document(file_path: str, logger):
     """
     Process a document through the full pipeline.
 
+    Supports PDF (via Azure Document Intelligence) as well as XLSX/CSV
+    (via the standalone A2A Excel Narrator Agent service).
+
     Args:
-        pdf_path: Path to PDF file
+        file_path: Path to PDF, XLSX, or CSV file
         logger: Logger instance
     """
     logger.info("=" * 60)
     logger.info("DOCUMENT PROCESSING PIPELINE")
     logger.info("=" * 60)
 
-    pdf_file = Path(pdf_path)
-    if not pdf_file.exists():
-        logger.error(f"File not found: {pdf_path}")
+    source_file = Path(file_path)
+    if not source_file.exists():
+        logger.error(f"File not found: {file_path}")
         sys.exit(1)
+
+    is_spreadsheet = source_file.suffix.lower() in {".xlsx", ".csv"}
 
     try:
         # Step 1: Extract text
-        logger.info("\n[1/5] Extracting text from PDF...")
-        extractor = DocumentExtractor()
-        extraction_result = extractor.extract_text_from_pdf(str(pdf_file))
+        if is_spreadsheet:
+            logger.info("\n[1/5] Extracting via A2A Excel Narrator Agent...")
+            extractor = A2AExcelClient()
+            extraction_result = extractor.extract_text_from_file(str(source_file))
+        else:
+            logger.info("\n[1/5] Extracting text from PDF...")
+            extractor = DocumentExtractor()
+            extraction_result = extractor.extract_text_from_pdf(str(source_file))
+
         extracted_text = extraction_result["text"]
         metadata = extraction_result["metadata"]
 
-        logger.info(f"✓ Extracted {len(extracted_text)} characters from {extraction_result['page_count']} pages")
+        unit = "sheets" if is_spreadsheet else "pages"
+        logger.info(f"✓ Extracted {len(extracted_text)} characters from {extraction_result['page_count']} {unit}")
 
         # Step 2: Chunk text
         logger.info("\n[2/5] Chunking text...")
@@ -96,7 +109,7 @@ def process_document(pdf_path: str, logger):
         logger.info("\n" + "=" * 60)
         logger.info("PROCESSING COMPLETE")
         logger.info("=" * 60)
-        logger.info(f"Source file: {pdf_file.name}")
+        logger.info(f"Source file: {source_file.name}")
         logger.info(f"Chunks created: {len(chunks)}")
         logger.info(f"Chunks indexed: {result['indexed']}")
         logger.info("=" * 60)
@@ -240,8 +253,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process a document
+  # Process a document (PDF, XLSX, or CSV)
   python main.py process doc.pdf
+  python main.py process data/courses.xlsx
 
   # Test retrieval
   python main.py retrieve "What is machine learning?" --top-k 5
@@ -260,7 +274,7 @@ Examples:
 
     # Process command
     process_parser = subparsers.add_parser("process", help="Process a document")
-    process_parser.add_argument("pdf_path", help="Path to PDF file")
+    process_parser.add_argument("file_path", help="Path to PDF, XLSX, or CSV file")
 
     # Retrieve command
     retrieve_parser = subparsers.add_parser("retrieve", help="Test retrieval")
@@ -296,7 +310,7 @@ Examples:
 
     # Execute command
     if args.command == "process":
-        process_document(args.pdf_path, logger)
+        process_document(args.file_path, logger)
 
     elif args.command == "retrieve":
         test_retrieval(args.query, args.top_k, logger)
